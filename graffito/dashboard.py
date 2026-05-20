@@ -293,20 +293,37 @@ _INDEX_HTML = r"""<!doctype html>
   section .body { padding: 12px 14px; max-height: 420px; overflow: auto; }
   section.chart .body { max-height: none; padding: 8px 4px; }
   section.tall .body { max-height: 700px; }
-  section.units .body { max-height: 560px; padding: 0; }
-  section.units table { table-layout: fixed; }
-  section.units th, section.units td { padding: 4px 10px; font-size: 12.5px; }
-  section.units thead { position: sticky; top: 0; background: var(--panel); z-index: 1; }
-  section.units thead th { border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
-  section.units thead th:hover { color: var(--text); }
-  section.units thead th.sorted::after { content: " ▼"; color: var(--blue); }
-  section.units thead th.sorted.asc::after { content: " ▲"; }
-  .pct-bar { display: inline-block; height: 8px; background: rgba(255,255,255,0.06); border-radius: 2px; vertical-align: middle; width: 80px; position: relative; }
-  .pct-bar > span { display: block; height: 100%; border-radius: 2px; }
-  .pct-bar.red > span { background: var(--red); }
-  .pct-bar.yellow > span { background: var(--yellow); }
-  .pct-bar.green > span { background: var(--green); }
+  section.units .body { max-height: none; padding: 0; }
   .units-footer { padding: 6px 14px; border-top: 1px solid var(--border); color: var(--dim); font-size: 11.5px; }
+
+  /* Treemap */
+  #treemap-host { position: relative; padding: 8px; height: 640px; }
+  #treemap-svg { width: 100%; height: 100%; display: block; }
+  #treemap-svg .group-label { font: 600 11px/1 ui-monospace, monospace; fill: var(--text); pointer-events: none; opacity: 0.9; letter-spacing: 0.04em; }
+  #treemap-svg .tu-label { font: 500 10px/1 ui-monospace, monospace; fill: #0e1116; pointer-events: none; opacity: 0.78; }
+  #treemap-svg .tu-label.dark { fill: #f0f6fc; }
+  #treemap-svg .tu-rect { stroke: #0e1116; stroke-width: 1; cursor: pointer; transition: filter 120ms; }
+  #treemap-svg .tu-rect:hover { filter: brightness(1.35) saturate(1.15); }
+  #treemap-svg .group-rect { fill: none; stroke: rgba(255,255,255,0.16); stroke-width: 1; pointer-events: none; }
+  #treemap-tooltip {
+    position: absolute; pointer-events: none; z-index: 5;
+    background: rgba(14,17,22,0.96); border: 1px solid var(--border); border-radius: 5px;
+    padding: 8px 11px; font-size: 12px; line-height: 1.4; color: var(--text);
+    max-width: 360px; box-shadow: 0 4px 18px rgba(0,0,0,0.4);
+    opacity: 0; transition: opacity 120ms;
+  }
+  #treemap-tooltip.visible { opacity: 1; }
+  #treemap-tooltip .tt-name { color: var(--blue); margin-bottom: 4px; font-weight: 600; word-break: break-all; }
+  #treemap-tooltip .tt-meta { color: var(--dim); font-size: 11.5px; }
+  #treemap-tooltip .tt-meta b { color: var(--text); font-weight: 500; }
+
+  /* Color scale legend */
+  .legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); }
+  .legend .scale {
+    width: 160px; height: 10px; border-radius: 2px;
+    background: linear-gradient(90deg, #6e1f1f 0%, #b16c1a 50%, #2f8a3e 92%, #3fb950 100%);
+    border: 1px solid var(--border);
+  }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; white-space: nowrap; vertical-align: top; }
   th { color: var(--dim); font-weight: normal; border-bottom: 1px solid var(--border); }
@@ -394,23 +411,23 @@ _INDEX_HTML = r"""<!doctype html>
       <span class="controls">
         <input id="unit-search" type="search" placeholder="filter (name / source)" />
         <select id="unit-status">
-          <option value="all">all</option>
-          <option value="incomplete" selected>incomplete</option>
+          <option value="all" selected>all</option>
+          <option value="incomplete">incomplete</option>
           <option value="zero">0% only</option>
           <option value="near">near match (90-99.99%)</option>
-          <option value="complete">complete (100%)</option>
+          <option value="complete">complete</option>
         </select>
+        <span class="legend">
+          <span>0%</span><span class="scale"></span><span>100%</span>
+        </span>
         <span id="unit-count" class="dim" style="font-size:11px;"></span>
       </span>
     </h2>
     <div class="body">
-      <table id="units-table"><thead><tr>
-        <th data-sort="name" style="width: 38%">Unit</th>
-        <th data-sort="fuzzy_pct" class="right sorted asc" style="width: 22%">Match</th>
-        <th data-sort="matched_functions" class="right" style="width: 14%">Functions</th>
-        <th data-sort="total_code" class="right" style="width: 12%">Code (B)</th>
-        <th data-sort="source_path" style="width: 14%">Source</th>
-      </tr></thead><tbody></tbody></table>
+      <div id="treemap-host">
+        <svg id="treemap-svg"></svg>
+        <div id="treemap-tooltip"></div>
+      </div>
     </div>
     <div class="units-footer" id="units-footer">—</div>
   </section>
@@ -431,6 +448,7 @@ _INDEX_HTML = r"""<!doctype html>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
 <script>
 let chart = null;
 let currentRange = "7d";
@@ -562,78 +580,197 @@ async function refreshJournal() {
   document.getElementById("journal").innerHTML = marked.parse(md);
 }
 
-// ── Units table ───────────────────────────────────────────────────────────
+// ── Units treemap ─────────────────────────────────────────────────────────
 let UNITS = [];
 let UNITS_MTIME = 0;
-let unitSort = { key: "fuzzy_pct", asc: true };
-
-function pctClass(p) {
-  if (p < 50) return "red";
-  if (p < 99.5) return "yellow";
-  return "green";
-}
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
-function renderUnits() {
+// Color scale: a perceptually smooth red → amber → green ramp that lands
+// on the dashboard's palette colors at the extremes.
+const PCT_COLOR = d3.scaleLinear()
+  .domain([0, 35, 70, 92, 100])
+  .range(["#6e1f1f", "#b16c1a", "#7a8a1a", "#2f8a3e", "#3fb950"])
+  .interpolate(d3.interpolateLab)
+  .clamp(true);
+
+function tuShortLabel(name) {
+  // "mario/Enemy/bosseel" → "bosseel"
+  const parts = name.split("/");
+  return parts[parts.length - 1];
+}
+
+function tuGroupKey(name) {
+  // First two segments form the group ("mario/Enemy"), so JSystem subdirs
+  // collapse to a single "mario/JSystem" tile group, etc.
+  const parts = name.split("/");
+  if (parts.length <= 2) return parts.join("/");
+  return parts.slice(0, 2).join("/");
+}
+
+function buildHierarchy(units) {
+  const groups = new Map();
+  for (const u of units) {
+    const k = tuGroupKey(u.name);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(u);
+  }
+  // Stable sort: groups by total code desc, units within group by code desc
+  const children = [...groups.entries()]
+    .map(([k, arr]) => ({
+      name: k,
+      children: arr
+        .filter(u => (u.total_code || 0) > 0)
+        .sort((a, b) => (b.total_code || 0) - (a.total_code || 0))
+        .map(u => ({ ...u, value: u.total_code || 1 })),
+    }))
+    .filter(g => g.children.length > 0)
+    .sort((a, b) => d3.sum(b.children, c => c.value) - d3.sum(a.children, c => c.value));
+  return { name: "root", children };
+}
+
+function filterUnits(units) {
   const search = document.getElementById("unit-search").value.trim().toLowerCase();
   const status = document.getElementById("unit-status").value;
-  let rows = UNITS.slice();
+  let rows = units.slice();
   if (status === "incomplete") rows = rows.filter(u => u.fuzzy_pct < 100);
   else if (status === "zero") rows = rows.filter(u => u.fuzzy_pct === 0);
   else if (status === "near") rows = rows.filter(u => u.fuzzy_pct >= 90 && u.fuzzy_pct < 100);
   else if (status === "complete") rows = rows.filter(u => u.fuzzy_pct >= 100);
-  if (search) rows = rows.filter(u => u.name.toLowerCase().includes(search) || (u.source_path||"").toLowerCase().includes(search));
+  if (search) rows = rows.filter(u =>
+    u.name.toLowerCase().includes(search) ||
+    (u.source_path || "").toLowerCase().includes(search));
+  return rows;
+}
 
-  const key = unitSort.key;
-  const asc = unitSort.asc;
-  rows.sort((a, b) => {
-    let va = a[key], vb = b[key];
-    if (typeof va === "string") return asc ? va.localeCompare(vb) : vb.localeCompare(va);
-    va = va ?? 0; vb = vb ?? 0;
-    return asc ? va - vb : vb - va;
-  });
+function renderTreemap() {
+  const host = document.getElementById("treemap-host");
+  const svg = d3.select("#treemap-svg");
+  svg.selectAll("*").remove();
 
-  const tb = document.querySelector("#units-table tbody");
-  // Cap to first 400 rendered rows; the user can filter down for more
-  const view = rows.slice(0, 400);
-  tb.innerHTML = view.map(u => {
-    const pct = (u.fuzzy_pct || 0).toFixed(2);
-    const cls = pctClass(u.fuzzy_pct || 0);
-    const w = Math.max(0, Math.min(100, u.fuzzy_pct || 0));
-    const src = u.source_path ? `<a href="https://github.com/${GITHUB_REPO}/blob/main/${escapeHtml(u.source_path)}" target="_blank">${escapeHtml(u.source_path.split('/').pop())}</a>` : '<span class="dim">—</span>';
-    return `<tr>
-      <td>${escapeHtml(u.name)}</td>
-      <td class="right">${pct}% <span class="pct-bar ${cls}"><span style="width:${w}%"></span></span></td>
-      <td class="right">${u.matched_functions}/${u.total_functions}</td>
-      <td class="right">${(u.total_code || 0).toLocaleString()}</td>
-      <td>${src}</td>
-    </tr>`;
-  }).join("");
-
-  document.getElementById("unit-count").textContent =
-    `${rows.length} of ${UNITS.length}` + (rows.length > view.length ? ` (showing first ${view.length})` : "");
-
-  const footer = document.getElementById("units-footer");
-  if (UNITS.length) {
-    const zero = UNITS.filter(u => u.fuzzy_pct === 0).length;
-    const near = UNITS.filter(u => u.fuzzy_pct >= 90 && u.fuzzy_pct < 100).length;
-    const complete = UNITS.filter(u => u.fuzzy_pct >= 100).length;
-    footer.textContent = `${UNITS.length} TUs · ${complete} complete · ${near} near-match (90-99.99%) · ${zero} at 0%`;
-  } else {
-    footer.textContent = "—";
+  const rows = filterUnits(UNITS);
+  if (rows.length === 0) {
+    svg.append("text").attr("x", "50%").attr("y", "50%")
+       .attr("fill", "#8b949e").attr("text-anchor", "middle")
+       .text("(no TUs match the current filter)");
+    document.getElementById("unit-count").textContent = `0 of ${UNITS.length}`;
+    renderFooter();
+    return;
   }
 
-  // Header sort indicators
-  document.querySelectorAll("#units-table thead th").forEach(th => {
-    th.classList.remove("sorted", "asc");
-    if (th.dataset.sort === unitSort.key) {
-      th.classList.add("sorted");
-      if (unitSort.asc) th.classList.add("asc");
-    }
-  });
+  const width = host.clientWidth - 16;
+  const height = host.clientHeight - 16;
+
+  const root = d3.hierarchy(buildHierarchy(rows))
+    .sum(d => d.value || 0)
+    .sort((a, b) => b.value - a.value);
+
+  d3.treemap()
+    .size([width, height])
+    .padding(2)
+    .paddingTop(d => d.depth === 0 ? 0 : 18)
+    .round(true)
+    (root);
+
+  const groupG = svg.append("g");
+  const groups = root.children || [];
+  groupG.selectAll("rect.group-rect")
+    .data(groups)
+    .join("rect")
+    .attr("class", "group-rect")
+    .attr("x", d => d.x0)
+    .attr("y", d => d.y0)
+    .attr("width", d => Math.max(0, d.x1 - d.x0))
+    .attr("height", d => Math.max(0, d.y1 - d.y0))
+    .attr("rx", 3);
+
+  groupG.selectAll("text.group-label")
+    .data(groups.filter(g => (g.x1 - g.x0) > 80 && (g.y1 - g.y0) > 24))
+    .join("text")
+    .attr("class", "group-label")
+    .attr("x", d => d.x0 + 6)
+    .attr("y", d => d.y0 + 12)
+    .text(d => d.data.name.toUpperCase());
+
+  const leaves = root.leaves();
+  const tu = svg.append("g")
+    .selectAll("g")
+    .data(leaves)
+    .join("g")
+    .attr("transform", d => `translate(${d.x0},${d.y0})`);
+
+  tu.append("rect")
+    .attr("class", "tu-rect")
+    .attr("width", d => Math.max(0, d.x1 - d.x0))
+    .attr("height", d => Math.max(0, d.y1 - d.y0))
+    .attr("fill", d => PCT_COLOR(d.data.fuzzy_pct || 0))
+    .attr("rx", 1.5)
+    .on("mousemove", function(event, d) { showTooltip(event, d.data); })
+    .on("mouseleave", hideTooltip)
+    .on("click", function(_event, d) {
+      if (d.data.source_path) {
+        window.open(`https://github.com/${GITHUB_REPO}/blob/main/${d.data.source_path}`, "_blank");
+      }
+    });
+
+  // Labels: only on cells big enough to read them
+  tu.filter(d => (d.x1 - d.x0) > 56 && (d.y1 - d.y0) > 22)
+    .append("text")
+    .attr("class", d => "tu-label" + ((d.data.fuzzy_pct || 0) < 50 ? " dark" : ""))
+    .attr("x", 5)
+    .attr("y", 13)
+    .text(d => {
+      const label = tuShortLabel(d.data.name);
+      const maxChars = Math.max(4, Math.floor((d.x1 - d.x0 - 10) / 6.5));
+      return label.length > maxChars ? label.slice(0, maxChars - 1) + "…" : label;
+    });
+
+  tu.filter(d => (d.x1 - d.x0) > 72 && (d.y1 - d.y0) > 38)
+    .append("text")
+    .attr("class", d => "tu-label" + ((d.data.fuzzy_pct || 0) < 50 ? " dark" : ""))
+    .attr("x", 5)
+    .attr("y", 27)
+    .style("opacity", 0.65)
+    .text(d => `${(d.data.fuzzy_pct || 0).toFixed(1)}%`);
+
+  document.getElementById("unit-count").textContent = `${rows.length} of ${UNITS.length}`;
+  renderFooter();
+}
+
+function renderFooter() {
+  const footer = document.getElementById("units-footer");
+  if (!UNITS.length) { footer.textContent = "—"; return; }
+  const zero = UNITS.filter(u => u.fuzzy_pct === 0).length;
+  const near = UNITS.filter(u => u.fuzzy_pct >= 90 && u.fuzzy_pct < 100).length;
+  const complete = UNITS.filter(u => u.fuzzy_pct >= 100).length;
+  footer.textContent = `${UNITS.length} TUs · ${complete} complete · ${near} near-match (90-99.99%) · ${zero} at 0% · click any tile to open on GitHub`;
+}
+
+function showTooltip(event, u) {
+  const tt = document.getElementById("treemap-tooltip");
+  const host = document.getElementById("treemap-host");
+  const rect = host.getBoundingClientRect();
+  const x = event.clientX - rect.left + 12;
+  const y = event.clientY - rect.top + 12;
+  tt.innerHTML = `<div class="tt-name">${escapeHtml(u.name)}</div>
+    <div class="tt-meta">
+      <b>${(u.fuzzy_pct || 0).toFixed(3)}%</b> fuzzy match<br>
+      <b>${u.matched_functions}/${u.total_functions}</b> functions matched<br>
+      <b>${(u.total_code || 0).toLocaleString()}</b> code bytes
+      ${u.source_path ? `<br><span class="dim">${escapeHtml(u.source_path)}</span>` : ""}
+    </div>`;
+  // Keep tooltip inside the host
+  const ttWidth = 280;
+  const xClamped = Math.min(x, host.clientWidth - ttWidth - 8);
+  tt.style.left = Math.max(0, xClamped) + "px";
+  tt.style.top = Math.min(y, host.clientHeight - 100) + "px";
+  tt.classList.add("visible");
+}
+
+function hideTooltip() {
+  document.getElementById("treemap-tooltip").classList.remove("visible");
 }
 
 async function refreshUnits() {
@@ -642,19 +779,13 @@ async function refreshUnits() {
   if (data.mtime !== UNITS_MTIME) {
     UNITS = data.units;
     UNITS_MTIME = data.mtime;
-    renderUnits();
+    renderTreemap();
   }
 }
 
-document.getElementById("unit-search").addEventListener("input", renderUnits);
-document.getElementById("unit-status").addEventListener("change", renderUnits);
-document.querySelectorAll("#units-table thead th").forEach(th => {
-  th.addEventListener("click", () => {
-    if (unitSort.key === th.dataset.sort) unitSort.asc = !unitSort.asc;
-    else { unitSort.key = th.dataset.sort; unitSort.asc = th.dataset.sort === "name" || th.dataset.sort === "source_path"; }
-    renderUnits();
-  });
-});
+document.getElementById("unit-search").addEventListener("input", renderTreemap);
+document.getElementById("unit-status").addEventListener("change", renderTreemap);
+window.addEventListener("resize", () => { if (UNITS.length) renderTreemap(); });
 async function refreshGoals() {
   const md = await tget("/api/goals");
   document.getElementById("goals").innerHTML = marked.parse(md);
