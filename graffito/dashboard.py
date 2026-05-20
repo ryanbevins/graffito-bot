@@ -76,92 +76,85 @@ def api_status(request: Request) -> JSONResponse:
     })
 
 
-@app.get("/api/eta")
-def api_eta(request: Request) -> JSONResponse:
-    """Linear-regression projected completion (fuzzy_match_pct → 100%).
-
-    Returns slope in % per day, the projected ETA timestamp (UTC ISO), the
-    number of data points used, the time span covered (hours), and a
-    confidence band based on R². Conservative: refuses to project on < 5
-    points, on a non-positive slope, or when the implied ETA exceeds 50
-    years out.
-    """
-    _check_auth(request)
-    rows = db.snapshot_series(since_iso=None)
-    pts: list[tuple[float, float]] = []
-    for r in rows:
-        try:
-            t = datetime.fromisoformat(r["recorded_at"]).timestamp()
-            pts.append((t, float(r["fuzzy_match_pct"])))
-        except Exception:
-            continue
-
-    if len(pts) < 5:
-        return JSONResponse({
-            "status": "insufficient_data",
-            "points": len(pts),
-            "needed": 5,
-        })
-
-    # Linear regression y = a*t + b (t in seconds), least squares.
+def _fit_eta(pts: list[tuple[float, float]], current_ts: float, current_pct: float) -> dict:
+    """Linear-regression fit on the given (timestamp_sec, pct) points.
+    Returns a fit summary including slope_per_day, r2, and eta_utc."""
     n = len(pts)
+    if n < 5:
+        return {"status": "insufficient_data", "points": n, "needed": 5}
     mean_t = sum(p[0] for p in pts) / n
     mean_y = sum(p[1] for p in pts) / n
     num = sum((p[0] - mean_t) * (p[1] - mean_y) for p in pts)
     den = sum((p[0] - mean_t) ** 2 for p in pts)
     if den == 0:
-        return JSONResponse({"status": "no_time_spread", "points": n})
+        return {"status": "no_time_spread", "points": n}
     slope_per_sec = num / den
     intercept = mean_y - slope_per_sec * mean_t
     slope_per_day = slope_per_sec * 86400
-
-    # R²
     ss_tot = sum((p[1] - mean_y) ** 2 for p in pts)
-    if ss_tot == 0:
-        r2 = 1.0
-    else:
-        ss_res = sum((p[1] - (slope_per_sec * p[0] + intercept)) ** 2 for p in pts)
-        r2 = max(0.0, 1.0 - ss_res / ss_tot)
-
-    current_pct = pts[-1][1]
-    current_ts = pts[-1][0]
+    r2 = 1.0 if ss_tot == 0 else max(
+        0.0,
+        1.0 - sum((p[1] - (slope_per_sec * p[0] + intercept)) ** 2 for p in pts) / ss_tot,
+    )
     span_hours = (pts[-1][0] - pts[0][0]) / 3600.0
 
-    if slope_per_day <= 0:
-        return JSONResponse({
-            "status": "not_advancing",
-            "points": n,
-            "slope_per_day": slope_per_day,
-            "current_pct": current_pct,
-            "r2": r2,
-            "span_hours": span_hours,
-        })
-
-    seconds_to_100 = (100.0 - current_pct) / slope_per_sec
-    if seconds_to_100 < 0:
-        eta_iso = None
-    else:
-        eta_ts = current_ts + seconds_to_100
-        # Cap at 50 years out
-        if eta_ts - current_ts > 86400 * 365 * 50:
-            return JSONResponse({
-                "status": "not_converging",
-                "points": n,
-                "slope_per_day": slope_per_day,
-                "current_pct": current_pct,
-                "r2": r2,
-                "span_hours": span_hours,
-            })
-        eta_iso = datetime.fromtimestamp(eta_ts, tz=timezone.utc).isoformat(timespec="seconds")
-
-    return JSONResponse({
-        "status": "ok",
+    base = {
         "points": n,
         "slope_per_day": slope_per_day,
-        "current_pct": current_pct,
         "r2": r2,
         "span_hours": span_hours,
-        "eta_utc": eta_iso,
+    }
+    if slope_per_day <= 0:
+        return {"status": "not_advancing", **base}
+    seconds_to_100 = (100.0 - current_pct) / slope_per_sec
+    if seconds_to_100 < 0:
+        return {"status": "ok", "eta_utc": None, **base}
+    if seconds_to_100 > 86400 * 365 * 50:
+        return {"status": "not_converging", **base}
+    eta_ts = current_ts + seconds_to_100
+    return {
+        "status": "ok",
+        "eta_utc": datetime.fromtimestamp(eta_ts, tz=timezone.utc).isoformat(timespec="seconds"),
+        **base,
+    }
+
+
+@app.get("/api/eta")
+def api_eta(request: Request) -> JSONResponse:
+    """Projected completion (fuzzy_match_pct → 100%) from two windows:
+
+    - **all**: linear regression over every progress_snapshots row. Stable,
+      smoothed; lags real-time pace.
+    - **24h**: regression over the last 24 h of snapshots. Reactive — reflects
+      whether the bot is currently making progress, not where it averages to
+      over the project lifetime.
+
+    Each window may independently come back ok / insufficient_data / no_time_spread
+    / not_advancing / not_converging. The dashboard shows the 24-hour ETA as
+    primary (live), the all-time as secondary (stable), and falls back
+    gracefully when 24h data is too thin.
+    """
+    _check_auth(request)
+    rows = db.snapshot_series(since_iso=None)
+    pts_all: list[tuple[float, float]] = []
+    for r in rows:
+        try:
+            t = datetime.fromisoformat(r["recorded_at"]).timestamp()
+            pts_all.append((t, float(r["fuzzy_match_pct"])))
+        except Exception:
+            continue
+    if not pts_all:
+        return JSONResponse({"status": "no_data"})
+
+    current_ts = pts_all[-1][0]
+    current_pct = pts_all[-1][1]
+    cutoff_24h = current_ts - 86400
+    pts_24h = [p for p in pts_all if p[0] >= cutoff_24h]
+
+    return JSONResponse({
+        "current_pct": current_pct,
+        "all": _fit_eta(pts_all, current_ts, current_pct),
+        "h24": _fit_eta(pts_24h, current_ts, current_pct),
     })
 
 
@@ -588,36 +581,88 @@ async function tget(path) {
 function fmtPct(p) { return p === null || p === undefined ? "—" : (Number(p).toFixed(4) + "%"); }
 function fmtSign(d) { if (d === null || d === undefined) return "—"; const s = d >= 0 ? "+" : ""; return s + Number(d).toFixed(4) + "%"; }
 
+function _slopeStr(s) {
+  if (s === null || s === undefined) return "—";
+  return Math.abs(s) >= 0.1 ? s.toFixed(3) : s.toExponential(2);
+}
+
+function _fitSummary(label, fit) {
+  if (!fit) return `${label}: —`;
+  if (fit.status === "insufficient_data") return `${label}: ${fit.points}/${fit.needed} points`;
+  if (fit.status === "no_time_spread") return `${label}: no time spread`;
+  if (fit.status === "not_advancing") return `${label}: flat (${_slopeStr(fit.slope_per_day)}%/d)`;
+  if (fit.status === "not_converging") return `${label}: >50y (${_slopeStr(fit.slope_per_day)}%/d)`;
+  if (fit.status === "ok" && fit.eta_utc) {
+    return `${label}: ${ts(fit.eta_utc, "date")} (${_slopeStr(fit.slope_per_day)}%/d, R²=${fit.r2.toFixed(2)})`;
+  }
+  return `${label}: —`;
+}
+
+function _confClass(r2) {
+  if (r2 === undefined || r2 === null) return "dim";
+  if (r2 >= 0.85) return "pos";
+  if (r2 >= 0.5) return "";
+  return "dim";
+}
+
 async function refreshEta() {
   const e = await jget("/api/eta");
   const el = document.getElementById("eta");
-  if (e.status === "insufficient_data") {
-    el.textContent = `ETA: need more data (${e.points}/${e.needed})`;
+  if (e.status === "no_data") {
+    el.textContent = "ETA: no data";
     el.className = "stat dim";
     return;
   }
-  if (e.status === "not_advancing") {
-    el.textContent = `ETA: flat (slope ${e.slope_per_day.toFixed(4)}%/day)`;
+
+  const live = e.h24 || {};
+  const all = e.all || {};
+  // Prefer the live (24h) projection if it produced an ETA; otherwise fall
+  // back to all-time. If neither projects, surface whichever has more signal.
+  const primary = live.status === "ok" && live.eta_utc ? live
+                : all.status  === "ok" && all.eta_utc  ? all
+                : (live.status === "insufficient_data" ? all : live);
+  const primaryLabel = primary === live ? "live (24h)" : "all-time";
+
+  let primaryHtml;
+  if (primary.status === "ok" && primary.eta_utc) {
+    const cls = _confClass(primary.r2);
+    primaryHtml = `ETA: <b>${ts(primary.eta_utc, "date")}</b> ` +
+                  `<span class="${cls}" style="font-size:11px;">` +
+                  `(${_slopeStr(primary.slope_per_day)}%/d · R²=${primary.r2.toFixed(2)} · ${primaryLabel})</span>`;
+    el.className = "stat";
+  } else if (primary.status === "insufficient_data") {
+    primaryHtml = `ETA: ${primary.points}/${primary.needed} points`;
     el.className = "stat dim";
-    return;
-  }
-  if (e.status === "not_converging") {
-    el.textContent = `ETA: >50y out (slope ${e.slope_per_day.toFixed(4)}%/day)`;
+  } else if (primary.status === "not_advancing") {
+    primaryHtml = `ETA: flat (${_slopeStr(primary.slope_per_day)}%/d)`;
     el.className = "stat dim";
-    return;
-  }
-  if (e.status !== "ok" || !e.eta_utc) {
-    el.textContent = "ETA: —";
+  } else if (primary.status === "not_converging") {
+    primaryHtml = `ETA: >50y out (${_slopeStr(primary.slope_per_day)}%/d)`;
     el.className = "stat dim";
-    return;
+  } else {
+    primaryHtml = "ETA: —";
+    el.className = "stat dim";
   }
-  const conf = e.r2 >= 0.85 ? "high"
-             : e.r2 >= 0.5  ? "med"
-             : "low";
-  const confColor = conf === "high" ? "pos" : conf === "med" ? "" : "dim";
-  el.innerHTML = `ETA: <b>${ts(e.eta_utc, "date")}</b> <span class="${confColor}" style="font-size:11px;">(${e.slope_per_day >= 0.1 ? e.slope_per_day.toFixed(3) : e.slope_per_day.toExponential(2)}%/d · R²=${e.r2.toFixed(2)} · ${conf})</span>`;
-  el.className = "stat";
-  el.title = `${e.points} snapshots over ${e.span_hours.toFixed(1)} h. Slope ${e.slope_per_day.toFixed(4)}%/day; R²=${e.r2.toFixed(3)}. Projection assumes the current pace holds — accuracy improves with more data.`;
+
+  // Append the secondary window inline (smaller, dim) when it's meaningful
+  const secondary = primary === live ? all : live;
+  const secondaryLabel = primary === live ? "all" : "24h";
+  if (secondary && secondary.status && secondary !== primary) {
+    if (secondary.status === "ok" && secondary.eta_utc) {
+      primaryHtml += ` <span class="dim" style="font-size:11px;">| ${secondaryLabel}: ${ts(secondary.eta_utc, "date")} (${_slopeStr(secondary.slope_per_day)}%/d)</span>`;
+    } else if (secondary.status === "not_advancing") {
+      primaryHtml += ` <span class="dim" style="font-size:11px;">| ${secondaryLabel}: flat</span>`;
+    } else if (secondary.status === "insufficient_data") {
+      primaryHtml += ` <span class="dim" style="font-size:11px;">| ${secondaryLabel}: ${secondary.points}/${secondary.needed}</span>`;
+    }
+  }
+  el.innerHTML = primaryHtml;
+
+  el.title =
+    `current ${(e.current_pct ?? 0).toFixed(4)}%\n` +
+    `live (24h) → ${_fitSummary("eta", live)} · ${live.points ?? 0} pts over ${(live.span_hours ?? 0).toFixed(2)}h\n` +
+    `all-time   → ${_fitSummary("eta", all)} · ${all.points ?? 0} pts over ${(all.span_hours ?? 0).toFixed(2)}h\n` +
+    `Projection assumes the current pace holds — live updates with each tick, all-time is more stable.`;
 }
 
 async function refreshStatus() {
