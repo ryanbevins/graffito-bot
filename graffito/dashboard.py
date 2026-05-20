@@ -17,6 +17,10 @@ from . import daemon as daemon_mod
 from . import db, schedule as sched_mod, snapshot
 from .config import SETTINGS
 
+# Cache for the per-unit report parse — report.json is ~3 MB so we don't want to
+# re-parse on every dashboard hit. Invalidated by file mtime.
+_units_cache: dict[str, object] = {"mtime": 0.0, "units": [], "overall": None}
+
 app = FastAPI(title="graffito dashboard", docs_url=None, redoc_url=None)
 
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", SETTINGS.dashboard_token or "")
@@ -97,6 +101,40 @@ def api_progress_series(request: Request, range: str = "7d") -> JSONResponse:
         for r in rows
     ]
     return JSONResponse(out)
+
+
+@app.get("/api/units")
+def api_units(request: Request) -> JSONResponse:
+    """Per-TU progress straight from report.json. Mtime-cached so the 3 MB parse
+    only happens once per build."""
+    _check_auth(request)
+    rj = SETTINGS.report_json
+    if not rj.exists():
+        return JSONResponse({"overall": None, "units": []})
+    mtime = rj.stat().st_mtime
+    if _units_cache["mtime"] != mtime:
+        from . import report
+        summary = report.load(rj)
+        _units_cache["mtime"] = mtime
+        _units_cache["overall"] = summary.overall_summary()
+        _units_cache["units"] = [
+            {
+                "name": u.name,
+                "fuzzy_pct": u.fuzzy_pct,
+                "total_code": u.total_code,
+                "matched_code": u.matched_code,
+                "matched_functions": u.matched_functions,
+                "total_functions": u.total_functions,
+                "complete": u.complete,
+                "source_path": u.source_path,
+            }
+            for u in summary.units
+        ]
+    return JSONResponse({
+        "overall": _units_cache["overall"],
+        "units": _units_cache["units"],
+        "mtime": mtime,
+    })
 
 
 @app.get("/api/ticks")
@@ -243,9 +281,32 @@ _INDEX_HTML = r"""<!doctype html>
     padding: 2px 10px; border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer;
   }
   section h2 .controls button.active { background: var(--blue); color: #001; border-color: var(--blue); }
+  section h2 .controls input[type="search"] {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--text);
+    padding: 2px 8px; border-radius: 4px; font: inherit; font-size: 11px; width: 200px;
+  }
+  section h2 .controls input[type="search"]:focus { outline: none; border-color: var(--blue); }
+  section h2 .controls select {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--text);
+    padding: 2px 8px; border-radius: 4px; font: inherit; font-size: 11px;
+  }
   section .body { padding: 12px 14px; max-height: 420px; overflow: auto; }
   section.chart .body { max-height: none; padding: 8px 4px; }
   section.tall .body { max-height: 700px; }
+  section.units .body { max-height: 560px; padding: 0; }
+  section.units table { table-layout: fixed; }
+  section.units th, section.units td { padding: 4px 10px; font-size: 12.5px; }
+  section.units thead { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  section.units thead th { border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+  section.units thead th:hover { color: var(--text); }
+  section.units thead th.sorted::after { content: " ▼"; color: var(--blue); }
+  section.units thead th.sorted.asc::after { content: " ▲"; }
+  .pct-bar { display: inline-block; height: 8px; background: rgba(255,255,255,0.06); border-radius: 2px; vertical-align: middle; width: 80px; position: relative; }
+  .pct-bar > span { display: block; height: 100%; border-radius: 2px; }
+  .pct-bar.red > span { background: var(--red); }
+  .pct-bar.yellow > span { background: var(--yellow); }
+  .pct-bar.green > span { background: var(--green); }
+  .units-footer { padding: 6px 14px; border-top: 1px solid var(--border); color: var(--dim); font-size: 11.5px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; white-space: nowrap; vertical-align: top; }
   th { color: var(--dim); font-weight: normal; border-bottom: 1px solid var(--border); }
@@ -325,6 +386,33 @@ _INDEX_HTML = r"""<!doctype html>
         <th>Time</th><th>TU</th><th>Symbol</th><th class="right">Before %</th><th class="right">After %</th><th>Outcome</th>
       </tr></thead><tbody></tbody></table>
     </div>
+  </section>
+
+  <section class="full units">
+    <h2>
+      Translation units
+      <span class="controls">
+        <input id="unit-search" type="search" placeholder="filter (name / source)" />
+        <select id="unit-status">
+          <option value="all">all</option>
+          <option value="incomplete" selected>incomplete</option>
+          <option value="zero">0% only</option>
+          <option value="near">near match (90-99.99%)</option>
+          <option value="complete">complete (100%)</option>
+        </select>
+        <span id="unit-count" class="dim" style="font-size:11px;"></span>
+      </span>
+    </h2>
+    <div class="body">
+      <table id="units-table"><thead><tr>
+        <th data-sort="name" style="width: 38%">Unit</th>
+        <th data-sort="fuzzy_pct" class="right sorted asc" style="width: 22%">Match</th>
+        <th data-sort="matched_functions" class="right" style="width: 14%">Functions</th>
+        <th data-sort="total_code" class="right" style="width: 12%">Code (B)</th>
+        <th data-sort="source_path" style="width: 14%">Source</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="units-footer" id="units-footer">—</div>
   </section>
 
   <section class="tall">
@@ -473,6 +561,100 @@ async function refreshJournal() {
   const md = await tget("/api/journal/today");
   document.getElementById("journal").innerHTML = marked.parse(md);
 }
+
+// ── Units table ───────────────────────────────────────────────────────────
+let UNITS = [];
+let UNITS_MTIME = 0;
+let unitSort = { key: "fuzzy_pct", asc: true };
+
+function pctClass(p) {
+  if (p < 50) return "red";
+  if (p < 99.5) return "yellow";
+  return "green";
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function renderUnits() {
+  const search = document.getElementById("unit-search").value.trim().toLowerCase();
+  const status = document.getElementById("unit-status").value;
+  let rows = UNITS.slice();
+  if (status === "incomplete") rows = rows.filter(u => u.fuzzy_pct < 100);
+  else if (status === "zero") rows = rows.filter(u => u.fuzzy_pct === 0);
+  else if (status === "near") rows = rows.filter(u => u.fuzzy_pct >= 90 && u.fuzzy_pct < 100);
+  else if (status === "complete") rows = rows.filter(u => u.fuzzy_pct >= 100);
+  if (search) rows = rows.filter(u => u.name.toLowerCase().includes(search) || (u.source_path||"").toLowerCase().includes(search));
+
+  const key = unitSort.key;
+  const asc = unitSort.asc;
+  rows.sort((a, b) => {
+    let va = a[key], vb = b[key];
+    if (typeof va === "string") return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+    va = va ?? 0; vb = vb ?? 0;
+    return asc ? va - vb : vb - va;
+  });
+
+  const tb = document.querySelector("#units-table tbody");
+  // Cap to first 400 rendered rows; the user can filter down for more
+  const view = rows.slice(0, 400);
+  tb.innerHTML = view.map(u => {
+    const pct = (u.fuzzy_pct || 0).toFixed(2);
+    const cls = pctClass(u.fuzzy_pct || 0);
+    const w = Math.max(0, Math.min(100, u.fuzzy_pct || 0));
+    const src = u.source_path ? `<a href="https://github.com/${GITHUB_REPO}/blob/main/${escapeHtml(u.source_path)}" target="_blank">${escapeHtml(u.source_path.split('/').pop())}</a>` : '<span class="dim">—</span>';
+    return `<tr>
+      <td>${escapeHtml(u.name)}</td>
+      <td class="right">${pct}% <span class="pct-bar ${cls}"><span style="width:${w}%"></span></span></td>
+      <td class="right">${u.matched_functions}/${u.total_functions}</td>
+      <td class="right">${(u.total_code || 0).toLocaleString()}</td>
+      <td>${src}</td>
+    </tr>`;
+  }).join("");
+
+  document.getElementById("unit-count").textContent =
+    `${rows.length} of ${UNITS.length}` + (rows.length > view.length ? ` (showing first ${view.length})` : "");
+
+  const footer = document.getElementById("units-footer");
+  if (UNITS.length) {
+    const zero = UNITS.filter(u => u.fuzzy_pct === 0).length;
+    const near = UNITS.filter(u => u.fuzzy_pct >= 90 && u.fuzzy_pct < 100).length;
+    const complete = UNITS.filter(u => u.fuzzy_pct >= 100).length;
+    footer.textContent = `${UNITS.length} TUs · ${complete} complete · ${near} near-match (90-99.99%) · ${zero} at 0%`;
+  } else {
+    footer.textContent = "—";
+  }
+
+  // Header sort indicators
+  document.querySelectorAll("#units-table thead th").forEach(th => {
+    th.classList.remove("sorted", "asc");
+    if (th.dataset.sort === unitSort.key) {
+      th.classList.add("sorted");
+      if (unitSort.asc) th.classList.add("asc");
+    }
+  });
+}
+
+async function refreshUnits() {
+  const data = await jget("/api/units");
+  if (!data.units) return;
+  if (data.mtime !== UNITS_MTIME) {
+    UNITS = data.units;
+    UNITS_MTIME = data.mtime;
+    renderUnits();
+  }
+}
+
+document.getElementById("unit-search").addEventListener("input", renderUnits);
+document.getElementById("unit-status").addEventListener("change", renderUnits);
+document.querySelectorAll("#units-table thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    if (unitSort.key === th.dataset.sort) unitSort.asc = !unitSort.asc;
+    else { unitSort.key = th.dataset.sort; unitSort.asc = th.dataset.sort === "name" || th.dataset.sort === "source_path"; }
+    renderUnits();
+  });
+});
 async function refreshGoals() {
   const md = await tget("/api/goals");
   document.getElementById("goals").innerHTML = marked.parse(md);
@@ -481,7 +663,7 @@ async function refreshGoals() {
 const GITHUB_REPO = "__GITHUB_REPO__";
 
 async function refreshAll() {
-  try { await Promise.all([refreshStatus(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals()]); }
+  try { await Promise.all([refreshStatus(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshUnits()]); }
   catch (e) { console.error(e); }
 }
 
@@ -509,6 +691,7 @@ setInterval(refreshAttempts, 30000);
 setInterval(refreshJournal, 60000);
 setInterval(refreshGoals, 60000);
 setInterval(refreshChart, 60000);
+setInterval(refreshUnits, 60000);
 </script>
 </body>
 </html>"""
