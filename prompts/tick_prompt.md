@@ -14,6 +14,7 @@ This is one work cycle. Take it at your own pace — no timeout, no deadline. Qu
    - Build: `python configure.py && ninja`.
    - Diff: `build/tools/objdiff-cli` per AGENTS.md, or `python tools/decomp-diff.py -u <unit> -d <symbol>` if available.
    - Iterate. The loop can take many rounds — that's expected. Don't rush.
+   - **Build your own tools when it helps.** If you're running the same multi-step pipeline twice, write it as a script in `tools/agent/` and commit it. See `system_context.md` for conventions. Don't suffer through repetitive grep+sed pipelines tick after tick — your future self will thank you for the helper.
 
 5. **Commit incrementally.** When a change improves a function (or otherwise produces signal worth keeping — a useful note, a corrected header, a documented dead-end), commit it with a descriptive message and `git push origin main`. The build-gate will reject pushes that don't build. Don't push if the build is broken; fix locally first.
 

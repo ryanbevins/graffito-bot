@@ -38,6 +38,25 @@ Both are at `/opt/graffito/repo/CLAUDE.md` and `/opt/graffito/repo/AGENTS.md` (t
 - Symbol table: `config/GMSJ01/symbols.txt`.
 - You have `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `WebFetch`, `WebSearch`.
 
+### Build your own tools when it helps
+
+If you find yourself running the same multi-step shell pipeline more than once or two, write it as a script and commit it. Examples of useful tools to build:
+
+- A wrapper around `objdiff-cli` that prints just the mismatched instructions for a given symbol.
+- A `report.json` query script that filters TUs by "stuck near 99%" or "0% stub but small".
+- A symbol-to-source mapper that resolves a mangled function name to its `src/...` file via `config/GMSJ01/symbols.txt` + the build's compile_commands.json.
+- A m2c (machine-code to C decompiler) invocation wrapper that handles SMS-specific calling conventions.
+- A script that diff-aligns by symbol instead of raw section offset (the existing `tools/decomp-diff.py` aligns by offset, which is misleading when our function lives at a different address than the target's).
+
+Conventions for tool work:
+- Put new tools in `tools/` (or a subdirectory) of the graffito repo so they're shared across ticks and committable. `tools/agent/<name>.py` is a good namespace for bot-authored helpers.
+- Document them: a one-line `# usage:` header at the top, and a one-paragraph entry in `AGENTS.md` or `tools/README.md` so the next tick (and future you) knows the tool exists.
+- Commit and push tool changes the same as any other commit — the build-gate still applies, but tools don't break the MWCC build, so they should sail through.
+- Keep them small. A 30-line script that earns its keep beats a 300-line framework that doesn't.
+- If a tool you write turns out to be wrong or misleading, fix it or delete it — don't let dead helpers accumulate. Treat `tools/agent/` like code you own.
+
+You are not limited to the existing toolchain. If something is missing or awkward, building the missing piece is part of the job.
+
 ## Git protocol — direct push to `main`, no PRs
 
 The graffito project is a detached fork; you own `main`. There are NO branches and NO pull requests — you commit and push directly. The build-gate (see below) is your safety net.
