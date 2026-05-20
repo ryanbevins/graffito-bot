@@ -80,9 +80,11 @@ def commit(message: str) -> str | None:
 
 
 def _build_succeeds() -> tuple[bool, str]:
-    """Run `python configure.py && ninja` in the repo. Returns (ok, last_lines)."""
+    """Run `python3 configure.py && ninja` in the repo. Returns (ok, last_lines)."""
+    import shutil as _sh
+    python_bin = _sh.which("python3") or _sh.which("python") or "python3"
     try:
-        cfg = _run(["python", "configure.py"], check=True)
+        cfg = _run([python_bin, "configure.py"], check=True)
         log.info("configure.py ok")
     except subprocess.CalledProcessError as e:
         tail = (e.stdout or "") + (e.stderr or "")
