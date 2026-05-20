@@ -367,9 +367,41 @@ def api_attempts(request: Request, limit: int = 50) -> JSONResponse:
 
 @app.get("/api/commits")
 def api_commits(request: Request, limit: int = 25) -> JSONResponse:
+    """Recent commits — source from `git log` so commits pushed by Claude
+    itself (not via the daemon's auto-push) still appear. The `commits` DB
+    table is consulted for any cached before/after % data."""
     _check_auth(request)
-    rows = db.recent_commits(limit=limit)
-    return JSONResponse([dict(r) for r in rows])
+    import subprocess as _sp
+    # Pull the DB rows once so we can decorate git log entries with % deltas
+    db_by_sha = {r["sha"]: r for r in db.recent_commits(limit=200)}
+
+    rows: list[dict] = []
+    try:
+        out = _sp.check_output(
+            ["git", "log", "--pretty=format:%H%x09%cI%x09%s", f"-n{limit}"],
+            cwd=str(SETTINGS.repo_dir),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        for line in out.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            sha, iso_date, message = parts
+            extra = db_by_sha.get(sha)
+            rows.append({
+                "sha": sha,
+                "pushed_at": iso_date,
+                "message": message,
+                "tick_id": extra["tick_id"] if extra else None,
+                "before_pct": extra["before_pct"] if extra else None,
+                "after_pct": extra["after_pct"] if extra else None,
+            })
+    except Exception as e:
+        # Fall back to the DB-only view if git isn't available
+        return JSONResponse([dict(r) for r in db.recent_commits(limit=limit)])
+    return JSONResponse(rows)
 
 
 @app.get("/api/journal/today")
