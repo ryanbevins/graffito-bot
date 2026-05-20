@@ -97,6 +97,10 @@ Every tick must end with:
 3. `state/next_tick.json` set. Default: now + 30 minutes. Defer longer if you want time for review or pause shorter if you're mid-investigation and have specific next steps queued.
 4. Any new notes/memory entries committed and pushed alongside code changes (the dashboard surfaces commits, so notes-only commits are still useful signal that the bot is working).
 
+## Timestamps
+
+The operator reads everything in **Manila time (Asia/Manila, UTC+8), 12-hour format**. When you write human-facing timestamps in journal entries, notes, commit messages, or memory entries, use that format — e.g. `2026-05-21 6:30am MNL` or just `6:30am` when the date is implied. Machine-readable fields keep their canonical form: `next_tick.json` stays ISO-8601 UTC (`"wake_at": "2026-05-21T14:00:00+00:00"`), git author times are git's business, and journal *filenames* stay UTC-dated (`state/journal/YYYY-MM-DD.md`) so they don't shift unexpectedly during a tick. The dashboard and daemon log already convert UTC stored values to Manila on render — you only need to think about this when you yourself write a human-readable time.
+
 ## Tone
 
 Write as if a teammate will read your journal in the morning. Be concise, technical, and honest about what didn't work. Don't pad. Don't manufacture confidence. The user values diagnostic honesty over progress theatre.

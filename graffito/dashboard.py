@@ -290,6 +290,13 @@ _INDEX_HTML = r"""<!doctype html>
     background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--text);
     padding: 2px 8px; border-radius: 4px; font: inherit; font-size: 11px;
   }
+  /* Fix unreadable browser-default option background — render options on the panel surface. */
+  section h2 .controls select option {
+    background: var(--panel); color: var(--text);
+  }
+  section h2 .controls select option:checked, section h2 .controls select option:hover {
+    background: var(--blue); color: #001;
+  }
   section .body { padding: 12px 14px; max-height: 420px; overflow: auto; }
   section.chart .body { max-height: none; padding: 8px 4px; }
   section.tall .body { max-height: 700px; }
@@ -456,6 +463,28 @@ const TOKEN = new URLSearchParams(location.search).get("token") || "";
 function authQ() { return TOKEN ? ("?token=" + encodeURIComponent(TOKEN)) : ""; }
 function authQ_amp() { return TOKEN ? ("&token=" + encodeURIComponent(TOKEN)) : ""; }
 
+// ── Time formatting ───────────────────────────────────────────────────────
+// All DB timestamps are ISO UTC. Display them as Manila time (UTC+8), 12-hour.
+const TZ = "Asia/Manila";
+const FMT_LONG = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ, month: "short", day: "numeric",
+  hour: "numeric", minute: "2-digit", hour12: true,
+});
+const FMT_SHORT = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ, hour: "numeric", minute: "2-digit", hour12: true,
+});
+const FMT_DATE = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ, month: "short", day: "numeric",
+});
+function ts(iso, kind) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  if (kind === "short") return FMT_SHORT.format(d);
+  if (kind === "date") return FMT_DATE.format(d);
+  return FMT_LONG.format(d);
+}
+
 async function jget(path) {
   const r = await fetch(path + authQ());
   if (!r.ok) throw new Error("fetch " + path + " → " + r.status);
@@ -491,11 +520,11 @@ async function refreshStatus() {
   dpill.innerHTML = '<span class="pill ' + cls + '">' + pillText + '</span>';
 
   if (s.next_tick) {
-    document.getElementById("next-tick").textContent = "next: " + s.next_tick.wake_at + " (" + s.next_tick.set_by + ")";
+    document.getElementById("next-tick").textContent = "next: " + ts(s.next_tick.wake_at) + " (" + s.next_tick.set_by + ")";
   } else {
     document.getElementById("next-tick").textContent = "next: —";
   }
-  document.getElementById("last-snapshot").textContent = "last snapshot: " + (s.last_snapshot_at || "—");
+  document.getElementById("last-snapshot").textContent = "last snapshot: " + ts(s.last_snapshot_at);
 
   const btn = document.getElementById("pause-btn");
   if (d.paused) { btn.textContent = "Resume"; btn.className = "resume"; }
@@ -504,7 +533,7 @@ async function refreshStatus() {
 
 async function refreshChart() {
   const data = await jget("/api/progress_series?range=" + currentRange + authQ_amp());
-  const labels = data.map(d => d.ts);
+  const labels = data.map(d => ts(d.ts, currentRange === "24h" ? "short" : "long"));
   const fuzzy = data.map(d => d.fuzzy_pct);
   if (!chart) {
     const ctx = document.getElementById("chart").getContext("2d");
@@ -542,7 +571,7 @@ async function refreshTicks() {
     const exitPill = exit === 0 ? '<span class="pill green">0</span>'
                    : exit === null ? '<span class="pill yellow">…</span>'
                    : '<span class="pill red">' + exit + '</span>';
-    tr.innerHTML = `<td>${r.id}</td><td>${r.reason}</td><td>${r.started_at}</td><td>${r.ended_at || '—'}</td><td>${exitPill}</td><td class="msg">${(r.summary||'').replace(/</g,'&lt;')}</td>`;
+    tr.innerHTML = `<td>${r.id}</td><td>${r.reason}</td><td>${ts(r.started_at)}</td><td>${ts(r.ended_at)}</td><td>${exitPill}</td><td class="msg">${(r.summary||'').replace(/</g,'&lt;')}</td>`;
     tb.appendChild(tr);
   }
 }
@@ -557,7 +586,7 @@ async function refreshCommits() {
     const before = r.before_pct === null ? "—" : Number(r.before_pct).toFixed(4);
     const after = r.after_pct === null ? "—" : Number(r.after_pct).toFixed(4);
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td><a href="${url}" target="_blank">${short}</a></td><td>${r.pushed_at}</td><td class="right">${before}</td><td class="right">${after}</td><td class="msg">${(r.message||'').replace(/</g,'&lt;')}</td>`;
+    tr.innerHTML = `<td><a href="${url}" target="_blank">${short}</a></td><td>${ts(r.pushed_at)}</td><td class="right">${before}</td><td class="right">${after}</td><td class="msg">${(r.message||'').replace(/</g,'&lt;')}</td>`;
     tb.appendChild(tr);
   }
 }
@@ -570,7 +599,7 @@ async function refreshAttempts() {
     const out = r.outcome;
     const cls = { improved: 'green', matched: 'green', regressed: 'red', no_change: '', errored: 'red' }[out] || '';
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.recorded_at}</td><td>${r.tu}</td><td>${r.symbol||''}</td><td class="right">${r.before_pct||''}</td><td class="right">${r.after_pct||''}</td><td><span class="pill ${cls}">${out}</span></td>`;
+    tr.innerHTML = `<td>${ts(r.recorded_at)}</td><td>${r.tu}</td><td>${r.symbol||''}</td><td class="right">${r.before_pct||''}</td><td class="right">${r.after_pct||''}</td><td><span class="pill ${cls}">${out}</span></td>`;
     tb.appendChild(tr);
   }
 }
