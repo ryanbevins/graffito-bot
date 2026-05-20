@@ -76,6 +76,95 @@ def api_status(request: Request) -> JSONResponse:
     })
 
 
+@app.get("/api/eta")
+def api_eta(request: Request) -> JSONResponse:
+    """Linear-regression projected completion (fuzzy_match_pct → 100%).
+
+    Returns slope in % per day, the projected ETA timestamp (UTC ISO), the
+    number of data points used, the time span covered (hours), and a
+    confidence band based on R². Conservative: refuses to project on < 5
+    points, on a non-positive slope, or when the implied ETA exceeds 50
+    years out.
+    """
+    _check_auth(request)
+    rows = db.snapshot_series(since_iso=None)
+    pts: list[tuple[float, float]] = []
+    for r in rows:
+        try:
+            t = datetime.fromisoformat(r["recorded_at"]).timestamp()
+            pts.append((t, float(r["fuzzy_match_pct"])))
+        except Exception:
+            continue
+
+    if len(pts) < 5:
+        return JSONResponse({
+            "status": "insufficient_data",
+            "points": len(pts),
+            "needed": 5,
+        })
+
+    # Linear regression y = a*t + b (t in seconds), least squares.
+    n = len(pts)
+    mean_t = sum(p[0] for p in pts) / n
+    mean_y = sum(p[1] for p in pts) / n
+    num = sum((p[0] - mean_t) * (p[1] - mean_y) for p in pts)
+    den = sum((p[0] - mean_t) ** 2 for p in pts)
+    if den == 0:
+        return JSONResponse({"status": "no_time_spread", "points": n})
+    slope_per_sec = num / den
+    intercept = mean_y - slope_per_sec * mean_t
+    slope_per_day = slope_per_sec * 86400
+
+    # R²
+    ss_tot = sum((p[1] - mean_y) ** 2 for p in pts)
+    if ss_tot == 0:
+        r2 = 1.0
+    else:
+        ss_res = sum((p[1] - (slope_per_sec * p[0] + intercept)) ** 2 for p in pts)
+        r2 = max(0.0, 1.0 - ss_res / ss_tot)
+
+    current_pct = pts[-1][1]
+    current_ts = pts[-1][0]
+    span_hours = (pts[-1][0] - pts[0][0]) / 3600.0
+
+    if slope_per_day <= 0:
+        return JSONResponse({
+            "status": "not_advancing",
+            "points": n,
+            "slope_per_day": slope_per_day,
+            "current_pct": current_pct,
+            "r2": r2,
+            "span_hours": span_hours,
+        })
+
+    seconds_to_100 = (100.0 - current_pct) / slope_per_sec
+    if seconds_to_100 < 0:
+        eta_iso = None
+    else:
+        eta_ts = current_ts + seconds_to_100
+        # Cap at 50 years out
+        if eta_ts - current_ts > 86400 * 365 * 50:
+            return JSONResponse({
+                "status": "not_converging",
+                "points": n,
+                "slope_per_day": slope_per_day,
+                "current_pct": current_pct,
+                "r2": r2,
+                "span_hours": span_hours,
+            })
+        eta_iso = datetime.fromtimestamp(eta_ts, tz=timezone.utc).isoformat(timespec="seconds")
+
+    return JSONResponse({
+        "status": "ok",
+        "points": n,
+        "slope_per_day": slope_per_day,
+        "current_pct": current_pct,
+        "r2": r2,
+        "span_hours": span_hours,
+        "eta_utc": eta_iso,
+    })
+
+
 @app.get("/api/progress_series")
 def api_progress_series(request: Request, range: str = "7d") -> JSONResponse:
     _check_auth(request)
@@ -365,6 +454,7 @@ _INDEX_HTML = r"""<!doctype html>
   <h1>graffito</h1>
   <span class="stat"><b id="pct">—</b> fuzzy match</span>
   <span class="stat" id="delta">Δ24h: —</span>
+  <span class="stat" id="eta" title="Linear projection from progress_snapshots — improves with more data.">ETA: —</span>
   <span class="stat" id="fns">fns: —</span>
   <span class="stat" id="units">units: —</span>
   <span class="stat" id="daemon-pill"></span>
@@ -497,6 +587,38 @@ async function tget(path) {
 
 function fmtPct(p) { return p === null || p === undefined ? "—" : (Number(p).toFixed(4) + "%"); }
 function fmtSign(d) { if (d === null || d === undefined) return "—"; const s = d >= 0 ? "+" : ""; return s + Number(d).toFixed(4) + "%"; }
+
+async function refreshEta() {
+  const e = await jget("/api/eta");
+  const el = document.getElementById("eta");
+  if (e.status === "insufficient_data") {
+    el.textContent = `ETA: need more data (${e.points}/${e.needed})`;
+    el.className = "stat dim";
+    return;
+  }
+  if (e.status === "not_advancing") {
+    el.textContent = `ETA: flat (slope ${e.slope_per_day.toFixed(4)}%/day)`;
+    el.className = "stat dim";
+    return;
+  }
+  if (e.status === "not_converging") {
+    el.textContent = `ETA: >50y out (slope ${e.slope_per_day.toFixed(4)}%/day)`;
+    el.className = "stat dim";
+    return;
+  }
+  if (e.status !== "ok" || !e.eta_utc) {
+    el.textContent = "ETA: —";
+    el.className = "stat dim";
+    return;
+  }
+  const conf = e.r2 >= 0.85 ? "high"
+             : e.r2 >= 0.5  ? "med"
+             : "low";
+  const confColor = conf === "high" ? "pos" : conf === "med" ? "" : "dim";
+  el.innerHTML = `ETA: <b>${ts(e.eta_utc, "date")}</b> <span class="${confColor}" style="font-size:11px;">(${e.slope_per_day >= 0.1 ? e.slope_per_day.toFixed(3) : e.slope_per_day.toExponential(2)}%/d · R²=${e.r2.toFixed(2)} · ${conf})</span>`;
+  el.className = "stat";
+  el.title = `${e.points} snapshots over ${e.span_hours.toFixed(1)} h. Slope ${e.slope_per_day.toFixed(4)}%/day; R²=${e.r2.toFixed(3)}. Projection assumes the current pace holds — accuracy improves with more data.`;
+}
 
 async function refreshStatus() {
   const s = await jget("/api/status");
@@ -823,7 +945,7 @@ async function refreshGoals() {
 const GITHUB_REPO = "__GITHUB_REPO__";
 
 async function refreshAll() {
-  try { await Promise.all([refreshStatus(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshUnits()]); }
+  try { await Promise.all([refreshStatus(), refreshEta(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshUnits()]); }
   catch (e) { console.error(e); }
 }
 
@@ -845,6 +967,7 @@ document.getElementById("pause-btn").addEventListener("click", async () => {
 
 refreshAll();
 setInterval(refreshStatus, 15000);
+setInterval(refreshEta, 60000);
 setInterval(refreshTicks, 15000);
 setInterval(refreshCommits, 30000);
 setInterval(refreshAttempts, 30000);
