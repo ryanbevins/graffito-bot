@@ -43,11 +43,14 @@ echo "==> installing graffito package"
 mkdir -p state/journal state/notes state/memory data logs/ticks
 
 # ── 5. Clone the graffito repo (the bot's workspace) ────────────────────────
+GRAFFITO_REMOTE="${GRAFFITO_REMOTE:-git@github-graffito:ryanbevins/graffito.git}"
+
 if [[ ! -d "$ROOT/repo/.git" ]]; then
-  echo "==> cloning ryanbevins/graffito into repo/"
-  git clone https://github.com/ryanbevins/graffito.git "$ROOT/repo"
+  echo "==> cloning $GRAFFITO_REMOTE into repo/"
+  git clone "$GRAFFITO_REMOTE" "$ROOT/repo"
 else
   echo "==> repo/ exists; fetching latest"
+  git -C "$ROOT/repo" remote set-url origin "$GRAFFITO_REMOTE"
   git -C "$ROOT/repo" fetch origin main
   git -C "$ROOT/repo" checkout main
   git -C "$ROOT/repo" pull --ff-only origin main || true
