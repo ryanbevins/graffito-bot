@@ -8,7 +8,7 @@ The work is legal: the project is a from-scratch decomp, the disc image was ripp
 
 These two files in the repo root are the canonical reference. They evolve, and your past self may have edited them. Re-read both at the start of each tick (cheap relative to a multi-minute build):
 
-- **`CLAUDE.md`** *(operator-curated, mostly read-only)* — MWCC compiler quirks, build commands, infectious strings, TParams framework, common matching patterns, MWCC reordering/store-load rules, stack padding bugs, control flow codegen, inline tracking, reference locals, constant hoisting, `@unnamed@` vs `static`, `-inline deferred` symbol order, TVec3 patterns, known unsolvable patterns. **Don't rewrite this** — it represents settled, human-reviewed knowledge. Promote items into it from `docs/MWCC.md` only when they're well-confirmed.
+- **`CLAUDE.md`** *(operator-curated, mostly read-only)* — MWCC compiler quirks, build commands, infectious strings, TParams framework, common matching patterns, MWCC reordering/store-load rules, stack padding bugs, control flow codegen, inline tracking, reference locals, constant hoisting, `@unnamed@` vs `static`, `-inline deferred` symbol order, TVec3 patterns, and a list of *currently-hard* patterns (root cause unconfirmed) — **explicitly not** "unsolvable", just unsolved. **Don't rewrite this** — it represents settled, human-reviewed knowledge. Promote items into it from `docs/MWCC.md` only when they're well-confirmed.
 - **`AGENTS.md`** *(operator-curated, mostly read-only)* — agent workflow guide: matching philosophy, objdiff/m2c usage, code conventions (T-prefixed classes, no RTTI/exceptions, C++98 only, `-O4,p -str reuse,readonly`), Spine/Nerve macros, UNUSED function reconstruction, marker-call mapping technique.
 - **`docs/MWCC.md`** *(yours — read AND write every tick when warranted)* — your living theory of the compiler. Three sections: **Settled** (confirmed by ≥2 independent TUs), **Hypotheses under investigation** (patterns you've noticed, with the experiment that would confirm/refute them), **Open questions** (mysteries you don't understand yet). Plus **Refuted / wrong turns** at the bottom to preserve dead-ends. Read this first — it's where your *current* understanding lives — and update it when you learn something. Entries within each section are ordered newest-first.
 
@@ -85,6 +85,10 @@ notes: add notes/MapObjSirena.md - hierarchy mapped, 16.6% (3280/19776)
 ```
 
 Keep commits small and one-logical-step each. The dashboard surfaces every commit; readable history matters.
+
+## On "unsolvable"
+
+There are no unsolvable patterns in this project. Every byte of difference between our build and the original has a mechanical cause inside MWCC — register allocator, instruction scheduler, peephole, calling-convention lowering, inline expansion, rodata layout. If a function won't match after a reasonable attempt, that's a *currently-hard* problem, not an impossible one. Document what you tried in `state/notes/<tu>.md`, add a hypothesis to `docs/MWCC.md` under *Hypotheses under investigation* (with the experiment that would confirm or refute), and move to a different target. Future ticks (yours or someone else's) will pick up the thread with fresh eyes. Don't propagate "unsolvable" framing in commits, journal entries, or notes — call them *unsolved* or *currently-hard* and treat them as open compiler-reverse-engineering problems.
 
 ## Hard constraints
 
