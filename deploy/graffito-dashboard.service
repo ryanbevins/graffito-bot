@@ -1,0 +1,19 @@
+[Unit]
+Description=Graffito dashboard (FastAPI on Tailscale)
+Documentation=https://github.com/ryanbevins/graffito-bot
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/graffito
+EnvironmentFile=/opt/graffito/.env
+ExecStart=/opt/graffito/.venv/bin/graffito dashboard --host 0.0.0.0 --port 8081
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=Graffito autonomous decomp agent daemon
+Documentation=https://github.com/ryanbevins/graffito-bot
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/graffito
+EnvironmentFile=/opt/graffito/.env
+ExecStart=/opt/graffito/.venv/bin/graffito daemon start --foreground
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+# Don't OOM-kill the whole service before its claude subprocess on a 1 GB host
+OOMScoreAdjust=-100
+# Generous timeout — a tick can legitimately take hours
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

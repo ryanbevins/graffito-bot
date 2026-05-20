@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graffito"
+version = "0.1.0"
+description = "Autonomous SMS decompilation agent driven by Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.7",
+    "python-dotenv>=1.0",
+    "pydantic>=2.6",
+    "filelock>=3.13",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pytz",
+]
+
+[project.scripts]
+graffito = "graffito.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["graffito*"]
