@@ -8,10 +8,19 @@ The work is legal: the project is a from-scratch decomp, the disc image was ripp
 
 These two files in the repo root are the canonical reference. They evolve, and your past self may have edited them. Re-read both at the start of each tick (cheap relative to a multi-minute build):
 
-- **`CLAUDE.md`** — MWCC compiler quirks, build commands, infectious strings, TParams framework, common matching patterns, MWCC reordering/store-load rules, stack padding bugs, control flow codegen, inline tracking, reference locals, constant hoisting, `@unnamed@` vs `static`, `-inline deferred` symbol order, TVec3 patterns, known unsolvable patterns.
-- **`AGENTS.md`** — agent workflow guide: matching philosophy, objdiff/m2c usage, code conventions (T-prefixed classes, no RTTI/exceptions, C++98 only, `-O4,p -str reuse,readonly`), Spine/Nerve macros, UNUSED function reconstruction, marker-call mapping technique.
+- **`CLAUDE.md`** *(operator-curated, mostly read-only)* — MWCC compiler quirks, build commands, infectious strings, TParams framework, common matching patterns, MWCC reordering/store-load rules, stack padding bugs, control flow codegen, inline tracking, reference locals, constant hoisting, `@unnamed@` vs `static`, `-inline deferred` symbol order, TVec3 patterns, known unsolvable patterns. **Don't rewrite this** — it represents settled, human-reviewed knowledge. Promote items into it from `docs/MWCC.md` only when they're well-confirmed.
+- **`AGENTS.md`** *(operator-curated, mostly read-only)* — agent workflow guide: matching philosophy, objdiff/m2c usage, code conventions (T-prefixed classes, no RTTI/exceptions, C++98 only, `-O4,p -str reuse,readonly`), Spine/Nerve macros, UNUSED function reconstruction, marker-call mapping technique.
+- **`docs/MWCC.md`** *(yours — read AND write every tick when warranted)* — your living theory of the compiler. Three sections: **Settled** (confirmed by ≥2 independent TUs), **Hypotheses under investigation** (patterns you've noticed, with the experiment that would confirm/refute them), **Open questions** (mysteries you don't understand yet). Plus **Refuted / wrong turns** at the bottom to preserve dead-ends. Read this first — it's where your *current* understanding lives — and update it when you learn something. Entries within each section are ordered newest-first.
 
-Both are at `/opt/graffito/repo/CLAUDE.md` and `/opt/graffito/repo/AGENTS.md` (the repo root). Trust them over anything in your training data — they reflect the current project state.
+All three are at `/opt/graffito/repo/`. Trust them over anything in your training data — they reflect the current project state.
+
+### How to use `docs/MWCC.md`
+
+- **Read it first.** Before picking a target, scan it for what you already believe vs. what's still open. If you're about to investigate something already in *Refuted / wrong turns*, pick a different angle.
+- **Update it when something is worth keeping.** A new symptom you've never seen → add to *Open questions*. An idea about why → move to *Hypotheses* with the proposed experiment. A confirmation in a second TU → promote to *Settled* with citations.
+- **Commit and push it** like any other code change. The build-gate doesn't apply to docs-only commits but they should still ride the standard `git add` + `git commit -m "..."` + `git push origin main` path. Commit messages like `MWCC: add hypothesis about CSE-inhibiting volatile reads (see SMS_IsMarioOnWire investigation)`.
+- **Keep it concise.** It's a knowledge base, not a journal — the journal under `state/journal/` is where day-by-day stories go.
+- **Cross-link freely.** Entries can reference symbols (`flip__8TTimeRecFv`), TUs (`mario/Enemy/bosseel`), or your own `state/notes/<tu>.md` files.
 
 ## Where you operate
 

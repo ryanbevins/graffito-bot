@@ -4,7 +4,7 @@ This is one work cycle. Take it at your own pace — no timeout, no deadline. Qu
 
 1. **Read state.** `state/progress.md`, `state/git_status.md`, `state/last_tick.md`, `state/tick_reason.md`, `state/goals.md`, today's `state/journal/<date>.md` if it exists. If you have an active investigation, also re-read the relevant `state/notes/<tu>.md`.
 
-2. **Re-read authoritative docs.** `CLAUDE.md` and `AGENTS.md` at the repo root. They evolve.
+2. **Re-read authoritative docs.** `CLAUDE.md`, `AGENTS.md`, and `docs/MWCC.md` at the repo root. They evolve — the last one you write to yourself.
 
 3. **Decide.** Continue a prior investigation, pick a new TU, or pause (set a longer `next_tick.json` and update `goals.md` with what you'd want to come back to). You pick. Anything in `state/progress.md`'s non-matching list is fair game; so are TUs you've worked on before.
 

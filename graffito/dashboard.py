@@ -292,6 +292,16 @@ def api_live(request: Request) -> JSONResponse:
     })
 
 
+@app.get("/api/mwcc")
+def api_mwcc(request: Request) -> PlainTextResponse:
+    """The bot's living MWCC understanding doc, sourced from the graffito repo."""
+    _check_auth(request)
+    p = SETTINGS.repo_dir / "docs" / "MWCC.md"
+    if not p.exists():
+        return PlainTextResponse("(docs/MWCC.md not found — bot hasn't initialized it yet)")
+    return PlainTextResponse(p.read_text(encoding="utf-8"))
+
+
 @app.get("/api/memory")
 def api_memory(request: Request) -> JSONResponse:
     _check_auth(request)
@@ -781,6 +791,11 @@ _INDEX_HTML = r"""<!doctype html>
   <section class="tall">
     <h2>Today's journal</h2>
     <div class="body md" id="journal">…</div>
+  </section>
+
+  <section class="full tall">
+    <h2>MWCC understanding (bot's living theory · <a href="https://github.com/__GITHUB_REPO__/blob/main/docs/MWCC.md" target="_blank" style="color:var(--blue); text-decoration:none; font-size:11px;">docs/MWCC.md ↗</a>)</h2>
+    <div class="body md" id="mwcc">…</div>
   </section>
 
   <section class="full">
@@ -1432,11 +1447,15 @@ async function refreshGoals() {
   const md = await tget("/api/goals");
   document.getElementById("goals").innerHTML = marked.parse(md);
 }
+async function refreshMwcc() {
+  const md = await tget("/api/mwcc");
+  document.getElementById("mwcc").innerHTML = marked.parse(md);
+}
 
 const GITHUB_REPO = "__GITHUB_REPO__";
 
 async function refreshAll() {
-  try { await Promise.all([refreshStatus(), refreshEta(), refreshLive(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshUnits(), refreshKnowledge()]); }
+  try { await Promise.all([refreshStatus(), refreshEta(), refreshLive(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshMwcc(), refreshUnits(), refreshKnowledge()]); }
   catch (e) { console.error(e); }
 }
 
@@ -1466,6 +1485,7 @@ setInterval(refreshCommits, 30000);
 setInterval(refreshAttempts, 30000);
 setInterval(refreshJournal, 60000);
 setInterval(refreshGoals, 60000);
+setInterval(refreshMwcc, 60000);
 setInterval(refreshChart, 60000);
 setInterval(refreshUnits, 60000);
 </script>
