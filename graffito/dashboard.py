@@ -185,6 +185,138 @@ def api_progress_series(request: Request, range: str = "7d") -> JSONResponse:
     return JSONResponse(out)
 
 
+@app.get("/api/live")
+def api_live(request: Request) -> JSONResponse:
+    """Live activity for the in-flight tick (if any).
+
+    Reads the current-tick pointer at logs/ticks/.current, tails the live
+    transcript, and inspects the Claude subprocess tree for what shell
+    commands the bot is currently running (ninja, mwcc, find, etc.). Falls
+    back gracefully when no tick is in flight.
+    """
+    _check_auth(request)
+    import subprocess as _sp
+    current_ptr = SETTINGS.tick_log_dir / ".current"
+    if not current_ptr.exists():
+        # No live tick. Return the last completed tick id + a short tail so the
+        # panel always has something to show.
+        last = db.last_tick()
+        if last is None:
+            return JSONResponse({"running": False, "tick": None, "tail": "", "subprocesses": []})
+        log_path = Path(last["log_path"] or "")
+        tail = ""
+        if log_path.exists():
+            try:
+                tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:])
+            except Exception:
+                tail = ""
+        return JSONResponse({
+            "running": False,
+            "tick": dict(last),
+            "elapsed_sec": None,
+            "tail": tail,
+            "subprocesses": [],
+        })
+
+    try:
+        log_path = Path(current_ptr.read_text(encoding="utf-8").strip())
+    except Exception:
+        return JSONResponse({"running": False, "tick": None, "tail": "", "subprocesses": []})
+
+    # The in-flight tick is the most recent row with ended_at IS NULL.
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT id, reason, started_at, log_path FROM ticks WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    tail = ""
+    if log_path.exists():
+        try:
+            # Read last 8 KB so very long ticks don't pull MB of text
+            with open(log_path, "rb") as fp:
+                fp.seek(0, 2)
+                size = fp.tell()
+                fp.seek(max(0, size - 8192))
+                blob = fp.read().decode("utf-8", errors="replace")
+            tail = "\n".join(blob.splitlines()[-60:])
+        except Exception as e:
+            tail = f"(could not read log: {e})"
+
+    elapsed_sec = None
+    if row:
+        try:
+            started = datetime.fromisoformat(row["started_at"])
+            elapsed_sec = (datetime.now(timezone.utc) - started).total_seconds()
+        except Exception:
+            pass
+
+    # Inspect the daemon's process tree to surface what the bot is currently
+    # doing. We descend from the graffito daemon's pid through claude into its
+    # children — those are the shell commands Claude has invoked.
+    subprocs: list[dict] = []
+    try:
+        daemon_pid = int(SETTINGS.daemon_pid.read_text().strip()) if SETTINGS.daemon_pid.exists() else None
+        if daemon_pid is not None:
+            visited: set[int] = set()
+            def descend(pid: int, depth: int) -> None:
+                if pid in visited or depth > 6:
+                    return
+                visited.add(pid)
+                try:
+                    out = _sp.check_output(["pgrep", "-P", str(pid)], text=True).strip()
+                except _sp.CalledProcessError:
+                    return
+                for child in (int(x) for x in out.splitlines() if x.strip()):
+                    try:
+                        cmd = _sp.check_output(
+                            ["ps", "-o", "comm=", "-o", "args=", "-p", str(child)],
+                            text=True,
+                        ).strip()
+                    except Exception:
+                        cmd = "?"
+                    # Trim the giant prompt that claude carries as argv
+                    comm = cmd.split(None, 1)[0] if cmd else "?"
+                    args = (cmd[len(comm):].strip())[:160] if cmd else ""
+                    subprocs.append({"pid": child, "depth": depth, "comm": comm, "args": args})
+                    descend(child, depth + 1)
+            descend(daemon_pid, 0)
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "running": row is not None,
+        "tick": dict(row) if row else None,
+        "elapsed_sec": elapsed_sec,
+        "tail": tail,
+        "subprocesses": subprocs,
+    })
+
+
+@app.get("/api/memory")
+def api_memory(request: Request) -> JSONResponse:
+    _check_auth(request)
+    files = sorted(SETTINGS.memory_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return JSONResponse([
+        {
+            "name": p.name,
+            "size": p.stat().st_size,
+            "modified": datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat(),
+        }
+        for p in files
+    ])
+
+
+@app.get("/api/memory/{name}")
+def api_memory_one(request: Request, name: str) -> PlainTextResponse:
+    _check_auth(request)
+    if "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="bad name")
+    p = SETTINGS.memory_dir / name
+    if not p.exists():
+        raise HTTPException(status_code=404)
+    return PlainTextResponse(p.read_text(encoding="utf-8"))
+
+
 @app.get("/api/units")
 def api_units(request: Request) -> JSONResponse:
     """Per-TU progress straight from report.json. Mtime-cached so the 3 MB parse
@@ -413,6 +545,74 @@ _INDEX_HTML = r"""<!doctype html>
     background: linear-gradient(90deg, #6e1f1f 0%, #b16c1a 50%, #2f8a3e 92%, #3fb950 100%);
     border: 1px solid var(--border);
   }
+
+  /* Live activity */
+  section.live h2 .pill.live { background: var(--green); color: #001; }
+  section.live h2 .pill.live::before {
+    content: "● "; color: rgba(0,0,0,0.4);
+    animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .live-grid { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: 280px; }
+  @media (max-width: 900px) { .live-grid { grid-template-columns: 1fr; } }
+  .live-meta { border-right: 1px solid var(--border); padding: 10px 12px; font-size: 12px; }
+  .live-meta .kv { display: grid; grid-template-columns: 82px 1fr; gap: 4px 8px; margin-bottom: 10px; }
+  .live-meta .kv .k { color: var(--dim); }
+  .live-meta .kv .v { color: var(--text); word-break: break-word; }
+  .live-meta .procs { margin-top: 6px; }
+  .live-meta .proc { padding: 3px 0; display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: baseline; font-size: 11.5px; }
+  .live-meta .proc .comm { color: var(--blue); }
+  .live-meta .proc .args { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .live-meta .proc.d0 { padding-left: 0; }
+  .live-meta .proc.d1 { padding-left: 10px; }
+  .live-meta .proc.d2 { padding-left: 20px; }
+  .live-meta .proc.d3 { padding-left: 30px; }
+  .live-tail { padding: 8px 12px; font-size: 11.5px; line-height: 1.45; overflow: auto; max-height: 280px; background: rgba(0,0,0,0.18); }
+  .live-tail pre { font: inherit; color: var(--text); margin: 0; }
+  @media (min-width: 901px) { section.live .body { padding: 0; max-height: none; } }
+
+  /* Module progress bars */
+  section.modules .body { max-height: none; padding: 12px 14px; }
+  .mod-row { display: grid; grid-template-columns: 140px 1fr 110px; gap: 10px; align-items: center; padding: 4px 0; font-size: 12px; }
+  .mod-row .name { color: var(--text); }
+  .mod-row .stat-text { text-align: right; color: var(--dim); font-size: 11.5px; }
+  .mod-bar { background: rgba(255,255,255,0.04); border-radius: 3px; height: 16px; position: relative; overflow: hidden; border: 1px solid var(--border); }
+  .mod-bar .fill { height: 100%; border-radius: 2px; }
+
+  /* Tick log modal */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50;
+    display: none; align-items: center; justify-content: center;
+  }
+  .modal-bg.visible { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    width: min(960px, 92vw); max-height: 84vh; display: flex; flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .modal h3 {
+    margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-size: 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .modal .modal-close {
+    margin-left: auto; background: none; border: 1px solid var(--border); color: var(--text);
+    width: 24px; height: 24px; border-radius: 4px; cursor: pointer; font: inherit;
+  }
+  .modal .modal-body { padding: 12px 16px; overflow: auto; flex: 1; }
+  .modal pre { white-space: pre-wrap; word-wrap: break-word; font: 12px/1.45 ui-monospace,monospace; margin: 0; }
+
+  /* Knowledge browser */
+  .kb-grid { display: grid; grid-template-columns: 260px 1fr; gap: 0; min-height: 380px; }
+  @media (max-width: 900px) { .kb-grid { grid-template-columns: 1fr; } }
+  .kb-list { border-right: 1px solid var(--border); overflow-y: auto; max-height: 540px; }
+  .kb-section { padding: 6px 10px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  .kb-item { padding: 6px 12px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.03); display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: baseline; }
+  .kb-item:hover { background: rgba(255,255,255,0.04); }
+  .kb-item.active { background: rgba(88,166,255,0.12); }
+  .kb-item .nm { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kb-item .meta { font-size: 10.5px; color: var(--dim); }
+  .kb-empty { padding: 12px; color: var(--dim); font-size: 12px; }
+  .kb-view { padding: 14px 18px; overflow: auto; max-height: 540px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; white-space: nowrap; vertical-align: top; }
   th { color: var(--dim); font-weight: normal; border-bottom: 1px solid var(--border); }
@@ -455,6 +655,20 @@ _INDEX_HTML = r"""<!doctype html>
   <span style="margin-left:auto"><button id="pause-btn" class="pause">Pause</button></span>
 </header>
 <main>
+  <section class="full live">
+    <h2>
+      Live activity
+      <span id="live-pill" class="pill dim">idle</span>
+      <span id="live-elapsed" class="dim" style="font-size:11.5px;"></span>
+    </h2>
+    <div class="body">
+      <div class="live-grid">
+        <div class="live-meta" id="live-meta">—</div>
+        <div class="live-tail"><pre id="live-tail">(no transcript yet)</pre></div>
+      </div>
+    </div>
+  </section>
+
   <section class="full chart">
     <h2>
       Progress over time
@@ -495,6 +709,11 @@ _INDEX_HTML = r"""<!doctype html>
     </div>
   </section>
 
+  <section class="full modules">
+    <h2>Progress by module</h2>
+    <div class="body"><div id="modules-host">—</div></div>
+  </section>
+
   <section class="full units">
     <h2>
       Translation units
@@ -531,7 +750,33 @@ _INDEX_HTML = r"""<!doctype html>
     <h2>Today's journal</h2>
     <div class="body md" id="journal">…</div>
   </section>
+
+  <section class="full">
+    <h2>Knowledge — notes &amp; memory</h2>
+    <div class="body" style="padding:0; max-height:none;">
+      <div class="kb-grid">
+        <div class="kb-list" id="kb-list">
+          <div class="kb-section">Notes (per-TU)</div>
+          <div id="kb-notes" class="kb-empty">—</div>
+          <div class="kb-section">Memory (cross-TU)</div>
+          <div id="kb-memory" class="kb-empty">—</div>
+        </div>
+        <div class="kb-view md" id="kb-view">
+          <em class="dim">Select a note or memory entry on the left.</em>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
+
+<div class="modal-bg" id="ticklog-modal-bg">
+  <div class="modal">
+    <h3>Tick <span id="ticklog-modal-id"></span> transcript
+      <button class="modal-close" onclick="closeTicklog()">✕</button>
+    </h3>
+    <div class="modal-body"><pre id="ticklog-modal-body">…</pre></div>
+  </div>
+</div>
 <footer>
   <span id="last-snapshot">—</span> · graffito-bot dashboard · auto-refresh 15s
 </footer>
@@ -738,10 +983,178 @@ async function refreshTicks() {
     const exitPill = exit === 0 ? '<span class="pill green">0</span>'
                    : exit === null ? '<span class="pill yellow">…</span>'
                    : '<span class="pill red">' + exit + '</span>';
+    tr.style.cursor = "pointer";
+    tr.title = "Click to view full transcript";
+    tr.addEventListener("click", () => openTicklog(r.id));
     tr.innerHTML = `<td>${r.id}</td><td>${r.reason}</td><td>${ts(r.started_at)}</td><td>${ts(r.ended_at)}</td><td>${exitPill}</td><td class="msg">${(r.summary||'').replace(/</g,'&lt;')}</td>`;
     tb.appendChild(tr);
   }
 }
+
+function fmtElapsed(sec) {
+  if (sec === null || sec === undefined) return "";
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}h ${m}m ${s}s`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+async function refreshLive() {
+  const e = await jget("/api/live");
+  const pill = document.getElementById("live-pill");
+  const elap = document.getElementById("live-elapsed");
+  const meta = document.getElementById("live-meta");
+  const tail = document.getElementById("live-tail");
+
+  if (e.running && e.tick) {
+    pill.className = "pill live";
+    pill.textContent = `tick #${e.tick.id} · ${e.tick.reason}`;
+    elap.textContent = `elapsed ${fmtElapsed(e.elapsed_sec)}`;
+    let metaHtml = `<div class="kv">
+      <div class="k">started</div><div class="v">${ts(e.tick.started_at)}</div>
+      <div class="k">reason</div><div class="v">${e.tick.reason || ''}</div>
+      <div class="k">log</div><div class="v" style="font-size:11px; color: var(--dim); word-break: break-all;">${e.tick.log_path || ''}</div>
+    </div>`;
+    metaHtml += `<div class="dim" style="margin-top:6px; font-size:11px; text-transform:uppercase; letter-spacing:0.04em;">subprocesses</div>`;
+    if (e.subprocesses && e.subprocesses.length) {
+      metaHtml += '<div class="procs">';
+      for (const p of e.subprocesses) {
+        metaHtml += `<div class="proc d${Math.min(3, p.depth)}"><span class="comm">${p.comm}</span><span class="args" title="${(p.args||'').replace(/"/g,'&quot;')}">${p.args ? '<span class="dim"> · </span>' + (p.args.length > 60 ? p.args.slice(0,60) + '…' : p.args) : ''}</span></div>`;
+      }
+      metaHtml += '</div>';
+    } else {
+      metaHtml += '<div class="dim" style="font-size:11.5px; margin-top:4px;">(claude thinking — no shell subprocess)</div>';
+    }
+    meta.innerHTML = metaHtml;
+  } else if (e.tick) {
+    pill.className = "pill dim";
+    pill.textContent = `idle · last #${e.tick.id} ${e.tick.exit_code === 0 ? '✓' : 'exit '+e.tick.exit_code}`;
+    elap.textContent = `next tick will appear here when it fires`;
+    meta.innerHTML = `<div class="kv">
+      <div class="k">last tick</div><div class="v">#${e.tick.id} · ${e.tick.reason}</div>
+      <div class="k">ended</div><div class="v">${ts(e.tick.ended_at)}</div>
+      <div class="k">exit</div><div class="v">${e.tick.exit_code}</div>
+    </div>
+    <div class="dim" style="font-size:11.5px;">${(e.tick.summary||'').replace(/</g,'&lt;').slice(0, 400)}</div>`;
+  } else {
+    pill.className = "pill dim";
+    pill.textContent = "no ticks yet";
+    elap.textContent = "";
+    meta.innerHTML = '<span class="dim">no ticks recorded</span>';
+  }
+
+  if (e.tail && e.tail.trim()) {
+    tail.textContent = e.tail;
+    // Auto-scroll to bottom only when content grew
+    const parent = tail.parentElement;
+    parent.scrollTop = parent.scrollHeight;
+  } else if (!e.running) {
+    tail.textContent = "(no recent transcript)";
+  }
+}
+
+// ── Per-module progress ───────────────────────────────────────────────────
+function renderModules() {
+  if (!UNITS.length) return;
+  const buckets = new Map();
+  for (const u of UNITS) {
+    const parts = u.name.split("/");
+    const key = parts.length >= 2 ? parts[1] : parts[0];
+    if (!buckets.has(key)) buckets.set(key, { matched: 0, total: 0, units: 0, complete: 0 });
+    const b = buckets.get(key);
+    b.matched += u.matched_code || 0;
+    b.total += u.total_code || 0;
+    b.units += 1;
+    if (u.fuzzy_pct >= 100) b.complete += 1;
+  }
+  const arr = [...buckets.entries()].map(([name, b]) => ({
+    name,
+    matched: b.matched,
+    total: b.total,
+    pct: b.total ? (b.matched / b.total * 100) : 0,
+    units: b.units,
+    complete: b.complete,
+  })).sort((a, b) => b.total - a.total);
+
+  const host = document.getElementById("modules-host");
+  host.innerHTML = arr.map(m => {
+    const color = (function(p) {
+      const c = PCT_COLOR(p);
+      return c;
+    })(m.pct);
+    return `<div class="mod-row" title="${m.units} TUs, ${m.complete} complete">
+      <div class="name">${m.name}</div>
+      <div class="mod-bar"><div class="fill" style="width:${m.pct.toFixed(2)}%; background:${color}"></div></div>
+      <div class="stat-text">${m.pct.toFixed(2)}% · ${m.complete}/${m.units}</div>
+    </div>`;
+  }).join("");
+}
+
+// ── Knowledge browser (notes + memory) ────────────────────────────────────
+let KB_SELECTION = null;  // {kind: 'notes'|'memory', name}
+
+function renderKbList(kind, items) {
+  const el = document.getElementById(kind === "notes" ? "kb-notes" : "kb-memory");
+  if (!items || !items.length) {
+    el.className = "kb-empty";
+    el.innerHTML = "<em>(none yet)</em>";
+    return;
+  }
+  el.className = "";
+  el.innerHTML = items.map(it => {
+    const date = ts(it.modified, "date");
+    const active = KB_SELECTION && KB_SELECTION.kind === kind && KB_SELECTION.name === it.name ? "active" : "";
+    return `<div class="kb-item ${active}" data-kind="${kind}" data-name="${encodeURIComponent(it.name)}">
+      <span class="nm">${escapeHtml(it.name.replace(/\.md$/,''))}</span>
+      <span class="meta">${date}</span>
+    </div>`;
+  }).join("");
+  el.querySelectorAll(".kb-item").forEach(el => {
+    el.addEventListener("click", () => {
+      const kind = el.dataset.kind;
+      const name = decodeURIComponent(el.dataset.name);
+      kbSelect(kind, name);
+    });
+  });
+}
+
+async function kbSelect(kind, name) {
+  KB_SELECTION = { kind, name };
+  const url = (kind === "notes" ? "/api/notes/" : "/api/memory/") + encodeURIComponent(name);
+  const md = await tget(url);
+  document.getElementById("kb-view").innerHTML = marked.parse(md);
+  // Re-render lists to update active state
+  refreshKnowledge();
+}
+
+async function refreshKnowledge() {
+  try {
+    const [notes, memory] = await Promise.all([jget("/api/notes"), jget("/api/memory")]);
+    renderKbList("notes", notes);
+    renderKbList("memory", memory);
+    // If nothing is selected and notes exist, leave the placeholder; the user clicks.
+  } catch (e) { console.error(e); }
+}
+
+// ── Tick log modal ────────────────────────────────────────────────────────
+async function openTicklog(tickId) {
+  const txt = await tget(`/api/tick_log/${tickId}`);
+  document.getElementById("ticklog-modal-id").textContent = "#" + tickId;
+  document.getElementById("ticklog-modal-body").textContent = txt;
+  document.getElementById("ticklog-modal-bg").classList.add("visible");
+}
+function closeTicklog() {
+  document.getElementById("ticklog-modal-bg").classList.remove("visible");
+}
+document.getElementById("ticklog-modal-bg").addEventListener("click", (e) => {
+  if (e.target.id === "ticklog-modal-bg") closeTicklog();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeTicklog();
+});
 
 async function refreshCommits() {
   const rows = await jget("/api/commits?limit=10");
@@ -976,6 +1389,7 @@ async function refreshUnits() {
     UNITS = data.units;
     UNITS_MTIME = data.mtime;
     renderTreemap();
+    renderModules();
   }
 }
 
@@ -990,7 +1404,7 @@ async function refreshGoals() {
 const GITHUB_REPO = "__GITHUB_REPO__";
 
 async function refreshAll() {
-  try { await Promise.all([refreshStatus(), refreshEta(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshUnits()]); }
+  try { await Promise.all([refreshStatus(), refreshEta(), refreshLive(), refreshChart(), refreshTicks(), refreshCommits(), refreshAttempts(), refreshJournal(), refreshGoals(), refreshUnits(), refreshKnowledge()]); }
   catch (e) { console.error(e); }
 }
 
@@ -1013,6 +1427,8 @@ document.getElementById("pause-btn").addEventListener("click", async () => {
 refreshAll();
 setInterval(refreshStatus, 15000);
 setInterval(refreshEta, 60000);
+setInterval(refreshLive, 4000);
+setInterval(refreshKnowledge, 30000);
 setInterval(refreshTicks, 15000);
 setInterval(refreshCommits, 30000);
 setInterval(refreshAttempts, 30000);

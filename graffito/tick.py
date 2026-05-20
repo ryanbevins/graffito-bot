@@ -101,38 +101,61 @@ def run_tick(reason: str, dry_run: bool = False) -> tuple[int, str | None]:
         "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
     ]
 
-    with open(log_path, "w", encoding="utf-8") as f:
-        f.write(f"# tick {tick_id} — {reason}\n")
-        f.write(f"# recovery: {recovery}\n")
-        f.write(f"# cwd: {SETTINGS.repo_dir}\n")
-        f.write(f"# claude_bin: {claude_bin}\n")
-        f.write(f"# model: {SETTINGS.claude_model}\n\n")
-        f.flush()
+    # Also write to a "current tick" pointer file so the dashboard can find
+    # the active log without scanning the directory.
+    current_ptr = SETTINGS.tick_log_dir / ".current"
+    current_ptr.write_text(str(log_path), encoding="utf-8")
 
+    # Stream stdout+stderr line-by-line so the log is tailable while the tick
+    # runs — capture_output=True would buffer everything until exit.
+    stdout_chunks: list[str] = []
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(f"# tick {tick_id} — {reason}\n")
+            f.write(f"# recovery: {recovery}\n")
+            f.write(f"# cwd: {SETTINGS.repo_dir}\n")
+            f.write(f"# claude_bin: {claude_bin}\n")
+            f.write(f"# model: {SETTINGS.claude_model}\n")
+            f.write(f"# started: {db.now_iso()}\n\n=== STREAM ===\n")
+            f.flush()
+
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(SETTINGS.repo_dir),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # merge for chronological order
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,  # line-buffered
+                )
+            except FileNotFoundError:
+                msg = f"claude binary not found: {SETTINGS.claude_bin}"
+                log.error(msg)
+                f.write(f"ERROR: {msg}\n")
+                db.finish_tick(tick_id, db.now_iso(), 127, msg, str(log_path))
+                return 127, str(log_path)
+
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                f.write(line)
+                f.flush()
+                stdout_chunks.append(line)
+            returncode = proc.wait()
+            f.write(f"\n=== exit_code: {returncode} ===\n")
+    finally:
         try:
-            # NO timeout — Claude works as long as it needs.
-            proc = subprocess.run(
-                cmd,
-                cwd=str(SETTINGS.repo_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except FileNotFoundError:
-            msg = f"claude binary not found: {SETTINGS.claude_bin}"
-            log.error(msg)
-            f.write(f"ERROR: {msg}\n")
-            db.finish_tick(tick_id, db.now_iso(), 127, msg, str(log_path))
-            return 127, str(log_path)
+            current_ptr.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-        f.write("=== STDOUT ===\n")
-        f.write(proc.stdout or "")
-        f.write("\n=== STDERR ===\n")
-        f.write(proc.stderr or "")
-        f.write(f"\n=== exit_code: {proc.returncode} ===\n")
-
-    stdout = proc.stdout or ""
+    class _Proc:
+        pass
+    proc_summary = _Proc()
+    proc_summary.returncode = returncode  # type: ignore[attr-defined]
+    proc = proc_summary
+    stdout = "".join(stdout_chunks)
     summary = _extract_summary(stdout)
     db.finish_tick(tick_id, db.now_iso(), proc.returncode, summary, str(log_path))
 
