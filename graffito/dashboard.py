@@ -1244,6 +1244,19 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
+// Defang raw HTML in markdown the bot writes — e.g. when a journal entry mentions
+// "CLBRoundf<s>" the <s> would be parsed as a strikethrough opener and leak across
+// every following paragraph. Escaping raw HTML tokens means the bot can write
+// template-syntax-looking text without breaking the rendering.
+marked.use({
+  renderer: {
+    html(token) {
+      const raw = typeof token === 'string' ? token : (token && token.text) || '';
+      return escapeHtml(raw);
+    },
+  },
+});
+
 // Color scale: a perceptually smooth red → amber → green ramp that lands
 // on the dashboard's palette colors at the extremes.
 const PCT_COLOR = d3.scaleLinear()
