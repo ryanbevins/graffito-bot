@@ -192,6 +192,8 @@ def schedule(in_: str | None, at_: str | None, reason: str) -> None:
 
 def _parse_interval(s: str) -> timedelta:
     s = s.strip().lower()
+    if s.endswith("s"):
+        return timedelta(seconds=int(s[:-1]))
     if s.endswith("m"):
         return timedelta(minutes=int(s[:-1]))
     if s.endswith("h"):

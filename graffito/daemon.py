@@ -81,7 +81,7 @@ def _check_regression(pre_pct: float | None, post_pct: float | None) -> None:
 
 def _do_tick(reason: str) -> bool:
     """Acquire lock, run a tick, handle next_tick fallback. Returns True if Claude ran."""
-    global _tick_inflight
+    global _tick_inflight, _heartbeat_inflight_since
     lock = FileLock(str(SETTINGS.tick_lock), timeout=1)
     try:
         with lock:
@@ -99,41 +99,47 @@ def _do_tick(reason: str) -> bool:
 
             _tick_inflight = True
             try:
-                exit_code, log_path = tick.run_tick(reason)
-                log.info("tick reason=%s exit=%s log=%s", reason, exit_code, log_path)
-            except Exception as e:
-                log.exception("tick crashed: %s", e)
-                exit_code = 1
+                try:
+                    exit_code, log_path = tick.run_tick(reason)
+                    log.info("tick reason=%s exit=%s log=%s", reason, exit_code, log_path)
+                except Exception as e:
+                    log.exception("tick crashed: %s", e)
+                    exit_code = 1
+
+                # Auto-push if there are local commits ahead of remote (Claude commits but
+                # may have forgotten to push, or hit network trouble mid-tick).
+                # Stays under _tick_inflight because the build-gate runs configure.py + ninja
+                # and can take minutes — must not trip the watchdog.
+                try:
+                    pushed_sha = git_ops.push_main(tick_id=None, before_pct=pre_pct)
+                    if pushed_sha:
+                        log.info("auto-pushed local commits to remote (%s)", pushed_sha)
+                except git_ops.BuildGateError as e:
+                    log.error("auto-push aborted by build-gate: %s", e)
+                except Exception as e:
+                    log.warning("auto-push attempt failed: %s", e)
+
+                post_snap = snapshot.load_summary()
+                post_pct = post_snap.fuzzy_match_pct if post_snap else None
+                _check_regression(pre_pct, post_pct)
+
+                # next_tick fallback
+                post_nt = sched_mod.read()
+                unchanged = (
+                    post_nt is not None
+                    and pre_nt is not None
+                    and post_nt.set_at == pre_nt.set_at
+                )
+                if post_nt is None or unchanged:
+                    nt = sched_mod.schedule_default()
+                    log.info("next_tick unset by cycle; default = %s", nt.wake_at.isoformat())
+                else:
+                    log.info("next_tick set by %s: %s", post_nt.set_by, post_nt.wake_at.isoformat())
             finally:
+                # Reset the heartbeat start so the post-tick heartbeat tail doesn't
+                # appear to the watchdog as a 30-min-stuck heartbeat.
+                _heartbeat_inflight_since = time.time()
                 _tick_inflight = False
-
-            # Auto-push if there are local commits ahead of remote (Claude commits but
-            # may have forgotten to push, or hit network trouble mid-tick).
-            try:
-                pushed_sha = git_ops.push_main(tick_id=None, before_pct=pre_pct)
-                if pushed_sha:
-                    log.info("auto-pushed local commits to remote (%s)", pushed_sha)
-            except git_ops.BuildGateError as e:
-                log.error("auto-push aborted by build-gate: %s", e)
-            except Exception as e:
-                log.warning("auto-push attempt failed: %s", e)
-
-            post_snap = snapshot.load_summary()
-            post_pct = post_snap.fuzzy_match_pct if post_snap else None
-            _check_regression(pre_pct, post_pct)
-
-            # next_tick fallback
-            post_nt = sched_mod.read()
-            unchanged = (
-                post_nt is not None
-                and pre_nt is not None
-                and post_nt.set_at == pre_nt.set_at
-            )
-            if post_nt is None or unchanged:
-                nt = sched_mod.schedule_default()
-                log.info("next_tick unset by cycle; default = %s", nt.wake_at.isoformat())
-            else:
-                log.info("next_tick set by %s: %s", post_nt.set_by, post_nt.wake_at.isoformat())
             return True
     except Timeout:
         log.info("tick already running; skipping overlap (reason=%s)", reason)
