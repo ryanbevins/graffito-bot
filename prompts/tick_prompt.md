@@ -18,12 +18,14 @@ This is one work cycle. Take it at your own pace — no timeout, no deadline. Qu
 
 5. **Commit incrementally.** When a change improves a function (or otherwise produces signal worth keeping — a useful note, a corrected header, a documented dead-end), commit it with a descriptive message and `git push origin main`. The build-gate will reject pushes that don't build. Don't push if the build is broken; fix locally first.
 
-6. **Journal.** Append to `state/journal/<today>.md`: what you tried, what changed, what surprised you, what you'd do next. One paragraph is fine. Bullet points are fine. Be honest about failures.
+6. **Journal — this is where tick stories go.** Append to `state/journal/<today>.md`: what you tried, what changed, what surprised you, what you'd do next. One paragraph is fine. Bullet points are fine. Be honest about failures. **Do not** mirror this content into `goals.md` — that file is strategy, not log.
 
 7. **Notes.** If you've gathered structural understanding of a TU that's worth preserving (class hierarchy, vtable layout, calling conventions, ordering constraints), write or update `state/notes/<tu>.md` and commit it.
 
 8. **Memory.** If you've learned something *generally useful* (a new MWCC quirk, a recurring pattern, a tooling tip), add a memory entry under `state/memory/` and link it from `state/memory/MEMORY.md`. Don't conflate this with notes — notes are TU-specific, memory is cross-TU.
 
-9. **Schedule next tick.** Write `state/next_tick.json` with `wake_at` 30 minutes from now (default) — or longer if you want to give CI/review time, shorter if you have an obvious next step. Format example: `{"wake_at": "2026-05-21T15:00:00+00:00", "reason": "continue MapObjSirena", "set_at": "...", "set_by": "claude"}`.
+9. **Goals audit (mandatory, every tick).** Open `state/goals.md`. If your strategic view *actually changed* this tick, **edit** the relevant section in place — don't append. If the file has grown past ~80 lines, contains "New observations from tick N" / "Updates from <date>" sections, or duplicate priority lists, **clean it up before ending the tick**. Move tick-log content into the journal, cross-TU lessons into memory, compiler hypotheses into `docs/MWCC.md`. A clean goals.md after every tick is a hard requirement, not a nice-to-have.
+
+10. **Schedule next tick.** Write `state/next_tick.json` with `wake_at` 30 minutes from now (default) — or longer if you want to give CI/review time, shorter if you have an obvious next step. Format example: `{"wake_at": "2026-05-21T15:00:00+00:00", "reason": "continue MapObjSirena", "set_at": "...", "set_by": "claude"}`.
 
 That's the cycle. Be deliberate. The progress graph rewards consistency, not heroics.

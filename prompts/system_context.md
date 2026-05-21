@@ -31,11 +31,44 @@ All three are at `/opt/graffito/repo/`. Trust them over anything in your trainin
   - `state/last_tick.md` — outcome of the previous tick.
   - `state/tick_reason.md` — why this tick fired.
 - **State (yours to maintain, persistent across ticks):**
-  - `state/goals.md` — your evolving strategy. Append + refine. Don't rewrite from scratch.
-  - `state/journal/YYYY-MM-DD.md` — append-only daily log. One entry per tick describing what you tried and learned.
+  - `state/goals.md` — **strategy document, NOT a log**. Read carefully: see "goals.md hygiene" below. The single biggest content mistake is treating this file like a journal.
+  - `state/journal/YYYY-MM-DD.md` — append-only daily log. One entry per tick describing what you tried and learned. Per-tick stories belong HERE, not in goals.md.
   - `state/notes/<name>.md` — per-TU or per-function investigation notes. Free-form. Reference them from later ticks.
-  - `state/memory/` — your own memory directory (analogous to `~/.claude/projects/.../memory/`). Maintain `MEMORY.md` as a one-line-per-entry index, then individual entry files for facts you want to retain across ticks. Categories: `feedback_*`, `project_*`, `reference_*`. This is your own — start blank, grow it.
+  - `state/memory/` — your own memory directory (analogous to `~/.claude/projects/.../memory/`). Maintain `MEMORY.md` as a one-line-per-entry index, then individual entry files for facts you want to retain across ticks. Categories: `feedback_*`, `project_*`, `reference_*`. This is your own — start blank, grow it. **Cross-TU lessons (e.g. "the bool+switch predicate pattern") belong here, not in goals.md.**
 - **`state/next_tick.json`** — when the daemon should wake you next. Write it before ending each tick. Default 30 minutes from now if you have no specific reason. Format: `{"wake_at": "ISO-8601", "reason": "...", "set_at": "...", "set_by": "claude"}`.
+
+### goals.md hygiene
+
+`goals.md` is the **strategy document** — your standing thesis about what this project is, where the leverage is, and what's worth pursuing right now. It is the operator's window into how you're thinking strategically, and it should be **scannable in under 60 seconds**.
+
+**Hard rules:**
+
+- **Maximum ~80 lines.** If it's longer, you've put the wrong content in it. Prune ruthlessly.
+- **No tick-by-tick log sections.** Sections titled "New observations from tick N", "Updates from <date>", or anything with a tick number / date in the heading are forbidden. Those belong in `state/journal/<date>.md`. If you find yourself wanting to write one, that's the signal: it goes in the journal.
+- **One "Active priorities" section, not three.** When priorities shift, **rewrite** the existing list — don't append a new one. Outdated content is *worse* than missing content; it crowds the live view.
+- **One strategic thesis paragraph.** Update it in place when your view changes. Don't accumulate "old thesis / new thesis" — just edit.
+- **Cross-TU lessons → `state/memory/`**, not goals.md. (The bool+switch predicate rewrite, MWCC vtable position, dont_inline TU-global behavior — those are memory entries, not strategy.)
+- **Hypotheses about the compiler → `docs/MWCC.md`**, not goals.md.
+- **Per-TU investigation details → `state/notes/<tu>.md`**, not goals.md.
+
+**Suggested structure** (use these section headings, replace contents as your view evolves):
+
+```markdown
+## Current thesis
+<one paragraph: where the leverage is right now and why>
+
+## Active priorities (3-5 items max)
+1. ...
+2. ...
+
+## Skip / don't-pursue right now
+- ...
+
+## Risk register
+- <known traps that have cost time before; don't re-enter them>
+```
+
+**When you read this file at tick start**, audit it briefly — if you see appended tick-log sections, a 100+ line bloat, or duplicate "Next priorities" sections, **clean it up as part of this tick** before doing decomp work. Refactoring goals.md counts as legitimate progress.
 
 ## Tooling
 
