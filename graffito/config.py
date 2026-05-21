@@ -35,6 +35,7 @@ class Settings(BaseModel):
     # Edited by Claude (persistent)
     goals_file: Path = ROOT / "state" / "goals.md"
     next_tick_json: Path = ROOT / "state" / "next_tick.json"
+    campaign_tu_md: Path = ROOT / "state" / "campaign_tu.md"
 
     # Daemon mutexes / flags
     tick_lock: Path = ROOT / "state" / ".tick.lock"

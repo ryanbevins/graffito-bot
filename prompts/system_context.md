@@ -32,6 +32,7 @@ All three are at `/opt/graffito/repo/`. Trust them over anything in your trainin
   - `state/tick_reason.md` — why this tick fired.
   - **`state/tick_focus.md` — *this tick's mode* and the focus directive.** See "Tick modes" below. Read this *first*; it shapes the rest of the cycle.
 - **State (yours to maintain, persistent across ticks):**
+  - `state/campaign_tu.md` — **active IMPLEMENTATION campaign tracker**. The TU you're currently working through to functional completion, your plan, what's done vs remaining, dependencies touched. See IMPLEMENTATION mode docs below for the format. Read this *immediately* on IMPLEMENTATION ticks; it determines whether you pick-and-start a new TU or continue an existing one.
   - `state/goals.md` — **strategy document, NOT a log**. Read carefully: see "goals.md hygiene" below. The single biggest content mistake is treating this file like a journal.
   - `state/journal/YYYY-MM-DD.md` — append-only daily log. One entry per tick describing what you tried and learned. Per-tick stories belong HERE, not in goals.md.
   - `state/notes/<name>.md` — per-TU or per-function investigation notes. Free-form. Reference them from later ticks.
@@ -124,28 +125,30 @@ Keep commits small and one-logical-step each. The dashboard surfaces every commi
 
 The daemon alternates ticks between two modes and writes the current one to `state/tick_focus.md`. This is **the single most important file to read at tick start** — it dictates what kind of target you should pick today. Mode selection is automatic; you don't pick it, you read it.
 
-### IMPLEMENTATION mode (bulk new matches, functional correctness first)
+### IMPLEMENTATION mode (sustained campaign on one TU)
 
-Pick targets where the gap is **missing source code, not codegen detail**. The bar for shipping a function here is **functional correctness**, *not* byte-perfect match. Read the asm, write C++ that does the same thing, commit, move on.
+IMPLEMENTATION mode is a **multi-tick campaign on a single TU**, not a stub-of-the-week scan. The state lives in `state/campaign_tu.md`:
 
-**Per-tick target: ≥ +0.5% fuzzy match** (≈ 18 KB of matched code on a ~3.6 MB project). Achievable with 1 mid-sized 0% TU, or 2–3 small ones, or finishing a partially-implemented TU. Plan against this number.
+- **Empty / no active campaign** → on the first IMPLEMENTATION tick, **pick ONE TU**, write it to `campaign_tu.md`, and **begin work in this same tick**. Don't pick-and-exit.
+- **Active campaign** → continue the existing TU. Don't switch.
+- **Status: functionally_complete** → on the next IMPLEMENTATION tick, pick a new TU.
+- **Status: blocked** → on the next IMPLEMENTATION tick, pick a new TU; the blocked one waits for INVESTIGATION or a future thaw.
 
-**Things you do NOT need to chase in this mode** (defer to INVESTIGATION):
-- Stack frame size mismatches
-- Register coloring (r5↔r7, r27↔r31, f30/f31)
-- `addi rN, rM, 0` vs `mr rN, rM` encoding
-- bool/BOOL casts, ternary→if rewrites, switch-defeats-fusion polish
-- Single missing instructions at the tail of an otherwise-correct function
+The bar for "shipping" a function is **functional correctness**, not byte-perfect match. Read the asm, write C++ that does the same thing. Stack-padding, register coloring, bool/BOOL casts, ternary→if polish, FPR swaps, `addi`/`mr` encoding — all of that is INVESTIGATION-mode work. A function that's logically correct but lands at 40-80% fuzzy is a successful IMPLEMENTATION outcome. File what's left in `state/notes/<tu>.md`; INVESTIGATION ticks close it. The hard "no fake matching" rule still applies — no stack-padding tricks, no goto control flow.
 
-A TU that lands at 40–80% fuzzy with **correct logic** is a successful IMPLEMENTATION outcome. File a note listing what's left to polish; the next investigation tick will finish it. The hard "no fake matching" rule still applies — no stack-padding hacks, no goto control flow.
+**Stop criteria** (when an IMPLEMENTATION tick may end):
 
-**You can freely create new files when needed:** new `.cpp` source files for empty stubs, new `.hpp` headers when a class is missing one or needs a sibling header, helper scripts under `tools/agent/`. Past agents have been hesitant to create headers — don't be. Follow project conventions and just write the file.
+1. ≥ **+0.2% fuzzy match gained** since tick start (compare `report.json` pre/post), OR
+2. The campaign TU is **functionally complete** (mark `Status: functionally_complete` in `campaign_tu.md`), OR
+3. The campaign TU is genuinely **blocked** (missing class hierarchy elsewhere, unreconstructable data table) — explain in the journal, mark `Status: blocked`.
 
-Concrete signals of a good IMPLEMENTATION target:
-- The TU's `.cpp` file is < 300 bytes or empty (`find src/ -name '*.cpp' -size -300c`).
-- `matched_code == 0 && total_code > 0` *and* source file exists (logic missing inside a skeleton).
-- Medium-fuzzy TUs (30–70%) where most of the gap is unwritten code.
-- 0% TUs that don't need huge rodata table reconstruction.
+If none of those hold, **keep working on the same TU**. Implement more functions. Write more source. The user's overriding concern is compute → percent efficiency; ending below the floor wastes the tick's startup overhead.
+
+**Working on related/dependency TUs is allowed.** Edit base classes the campaign inherits from, fix sibling TUs the campaign calls into, add shared types/forward-decls to headers. Note them under `## Dependencies touched` in `campaign_tu.md`. What's NOT permitted: silently abandoning the campaign for an unrelated TU because the work got hard — mark `blocked` and exit cleanly instead.
+
+**Picking the first TU** (when `campaign_tu.md` is empty): choose something you can finish functionally in 1-5 implementation ticks. Strong candidates: empty `.cpp` stubs (`find src/ -name '*.cpp' -size -300c`), `matched_code==0 && source exists`, medium-fuzzy 30-70% TUs, small-to-medium 0% TUs without huge rodata. Avoid 30+ KB 0% TUs with complex class hierarchies — those are multi-week campaigns.
+
+**You can freely create new files when needed:** new `.cpp` source files, new `.hpp` headers when a class needs one or a sibling header, helper scripts under `tools/agent/`. Past agents have been hesitant about headers — don't be.
 
 ### INVESTIGATION mode (codegen polish + MWCC theory)
 

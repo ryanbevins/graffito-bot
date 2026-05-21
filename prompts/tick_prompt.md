@@ -9,9 +9,9 @@ This is one work cycle. Take it at your own pace — no timeout, no deadline. Qu
 3. **Re-read authoritative docs.** `CLAUDE.md`, `AGENTS.md`, and `docs/MWCC.md` at the repo root. They evolve — the last one you write to yourself.
 
 4. **Decide, constrained by the mode.**
-   - **IMPLEMENTATION mode:** pick a target whose gap is missing code, not codegen detail. Empty/near-empty `.cpp`, `matched_code==0 && source exists`, medium-fuzzy whole TU, 0%-stub-without-huge-rodata. Do NOT zoom into a near-100% register-coloring fix.
-   - **INVESTIGATION mode:** pick a memory-pattern sweep across many TUs, a header signature audit, or a hypothesis test from `docs/MWCC.md`. Do NOT start writing a new whole TU from scratch.
-   - If you decide to override the mode, journal a one-sentence justification (e.g. "no IMPLEMENTATION target available — every empty stub depends on missing class hierarchy; running INVESTIGATION today").
+   - **IMPLEMENTATION mode:** read `state/campaign_tu.md`. If empty / `functionally_complete` / `blocked` → pick ONE new TU, write it to `campaign_tu.md`, **begin work this same tick** (don't pick-and-exit). Otherwise → continue the existing campaign TU. Stop criteria: +0.2% fuzzy gain since tick start, OR campaign TU functionally complete, OR genuinely blocked. Related/dependency TUs are allowed under the carve-out in `tick_focus.md`.
+   - **INVESTIGATION mode:** priority 1 is closing leftover codegen polish on the active campaign TU and recent IMPLEMENTATION ticks' shipped TUs. Priority 2 is memory-pattern sweeps + `docs/MWCC.md` hypothesis testing.
+   - If you decide to override the mode, journal a one-sentence justification.
 
 5. **Work the matching loop.**
    - Read the original asm under `build/GMSJ01/asm/`.
