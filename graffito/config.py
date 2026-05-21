@@ -30,6 +30,7 @@ class Settings(BaseModel):
     git_status_md: Path = ROOT / "state" / "git_status.md"
     last_tick_md: Path = ROOT / "state" / "last_tick.md"
     tick_reason_md: Path = ROOT / "state" / "tick_reason.md"
+    tick_focus_md: Path = ROOT / "state" / "tick_focus.md"
 
     # Edited by Claude (persistent)
     goals_file: Path = ROOT / "state" / "goals.md"

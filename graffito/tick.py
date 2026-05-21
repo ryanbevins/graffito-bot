@@ -44,11 +44,14 @@ def _last_exit_was_error() -> bool:
     return last is not None and last["exit_code"] not in (None, 0)
 
 
-def run_tick(reason: str, dry_run: bool = False) -> tuple[int, str | None]:
+def run_tick(reason: str, dry_run: bool = False, mode: str | None = None) -> tuple[int, str | None]:
     """Run one Claude cycle (or dry-run to print the constructed prompt).
 
     Returns (exit_code, log_path). NO subprocess timeout — Claude can think as long
     as it needs. The daemon's tick lock prevents overlapping ticks.
+
+    `mode` selects the focus directive written to state/tick_focus.md
+    ('implementation' or 'investigation') — the daemon alternates this per tick.
     """
     ensure_dirs()
     refresh.ensure_goals_stub()
@@ -70,7 +73,7 @@ def run_tick(reason: str, dry_run: bool = False) -> tuple[int, str | None]:
             source="pre_tick",
         )
 
-    refresh.write_all(reason, prev_pct=pre_pct)
+    refresh.write_all(reason, prev_pct=pre_pct, mode=mode)
 
     recovery = reason == "recovery_after_fail" or (reason == "scheduled" and _last_exit_was_error())
     prompt = _prompt_body(recovery=recovery)
@@ -87,8 +90,8 @@ def run_tick(reason: str, dry_run: bool = False) -> tuple[int, str | None]:
         )
         return 0, str(log_path)
 
-    tick_id = db.insert_tick(reason, db.now_iso())
-    log.info("tick %s starting (reason=%s, recovery=%s)", tick_id, reason, recovery)
+    tick_id = db.insert_tick(reason, db.now_iso(), mode=mode)
+    log.info("tick %s starting (reason=%s, mode=%s, recovery=%s)", tick_id, reason, mode, recovery)
 
     claude_bin = shutil.which(SETTINGS.claude_bin) or SETTINGS.claude_bin
     cmd = [

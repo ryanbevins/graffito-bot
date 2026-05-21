@@ -30,6 +30,7 @@ All three are at `/opt/graffito/repo/`. Trust them over anything in your trainin
   - `state/git_status.md` — branch, head, last 10 commits, working-tree status.
   - `state/last_tick.md` — outcome of the previous tick.
   - `state/tick_reason.md` — why this tick fired.
+  - **`state/tick_focus.md` — *this tick's mode* and the focus directive.** See "Tick modes" below. Read this *first*; it shapes the rest of the cycle.
 - **State (yours to maintain, persistent across ticks):**
   - `state/goals.md` — **strategy document, NOT a log**. Read carefully: see "goals.md hygiene" below. The single biggest content mistake is treating this file like a journal.
   - `state/journal/YYYY-MM-DD.md` — append-only daily log. One entry per tick describing what you tried and learned. Per-tick stories belong HERE, not in goals.md.
@@ -118,6 +119,59 @@ notes: add notes/MapObjSirena.md - hierarchy mapped, 16.6% (3280/19776)
 ```
 
 Keep commits small and one-logical-step each. The dashboard surfaces every commit; readable history matters.
+
+## Tick modes — alternation between IMPLEMENTATION and INVESTIGATION
+
+The daemon alternates ticks between two modes and writes the current one to `state/tick_focus.md`. This is **the single most important file to read at tick start** — it dictates what kind of target you should pick today. Mode selection is automatic; you don't pick it, you read it.
+
+### IMPLEMENTATION mode (bulk new matches, functional correctness first)
+
+Pick targets where the gap is **missing source code, not codegen detail**. The bar for shipping a function here is **functional correctness**, *not* byte-perfect match. Read the asm, write C++ that does the same thing, commit, move on.
+
+**Per-tick target: ≥ +0.5% fuzzy match** (≈ 18 KB of matched code on a ~3.6 MB project). Achievable with 1 mid-sized 0% TU, or 2–3 small ones, or finishing a partially-implemented TU. Plan against this number.
+
+**Things you do NOT need to chase in this mode** (defer to INVESTIGATION):
+- Stack frame size mismatches
+- Register coloring (r5↔r7, r27↔r31, f30/f31)
+- `addi rN, rM, 0` vs `mr rN, rM` encoding
+- bool/BOOL casts, ternary→if rewrites, switch-defeats-fusion polish
+- Single missing instructions at the tail of an otherwise-correct function
+
+A TU that lands at 40–80% fuzzy with **correct logic** is a successful IMPLEMENTATION outcome. File a note listing what's left to polish; the next investigation tick will finish it. The hard "no fake matching" rule still applies — no stack-padding hacks, no goto control flow.
+
+**You can freely create new files when needed:** new `.cpp` source files for empty stubs, new `.hpp` headers when a class is missing one or needs a sibling header, helper scripts under `tools/agent/`. Past agents have been hesitant to create headers — don't be. Follow project conventions and just write the file.
+
+Concrete signals of a good IMPLEMENTATION target:
+- The TU's `.cpp` file is < 300 bytes or empty (`find src/ -name '*.cpp' -size -300c`).
+- `matched_code == 0 && total_code > 0` *and* source file exists (logic missing inside a skeleton).
+- Medium-fuzzy TUs (30–70%) where most of the gap is unwritten code.
+- 0% TUs that don't need huge rodata table reconstruction.
+
+### INVESTIGATION mode (codegen polish + MWCC theory)
+
+Two responsibilities:
+
+1. **Finish the polish on prior IMPLEMENTATION ticks' leftovers** — bool/BOOL casts, ternary rewrites, switch fusion, `__fabsf`/`.value` bypass, intermediate `bool match`, header signature audits. Each IMPLEMENTATION tick deliberately leaves codegen detail for you to clean up; that's the whole division of labor.
+2. **Grow `docs/MWCC.md`** — test hypotheses, confirm or refute open questions, promote settled rules with ≥2-TU citations.
+
+Per-target gain is small but cumulative, and every Settled rule lowers the cost of subsequent IMPLEMENTATION ticks.
+
+Concrete signals of a good INVESTIGATION target:
+- The previous IMPLEMENTATION tick shipped a TU at <100% — close the remaining gap.
+- Apply a `state/memory/feedback_*.md` pattern across many TUs.
+- Header signature sweep (e.g. `void`-declared `is*` predicates that return BOOL).
+- Test a `docs/MWCC.md` *Hypothesis under investigation* with its explicit experiment.
+
+**Defer this mode** for: writing brand-new TU implementations, big greenfield 0%-stub writes. Those are IMPLEMENTATION work.
+
+### Why the alternation matters
+
+The operator's primary concern: **compute → percent efficiency**. IMPLEMENTATION ticks move the headline number fastest per token spent. INVESTIGATION ticks compound by lowering the cost-per-match of every subsequent IMPLEMENTATION tick. Doing only one mode is wrong:
+
+- All IMPLEMENTATION → you burn cycles re-discovering compiler quirks on every new TU.
+- All INVESTIGATION → the headline % barely moves; tokens get spent on register-coloring puzzles that compound nothing.
+
+Alternation captures both. **Treat `state/tick_focus.md` as binding** unless you have a strong, specific reason to override (see the "Override allowed" section in that file), and if you do override, journal why.
 
 ## On "unsolvable"
 

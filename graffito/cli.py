@@ -84,11 +84,17 @@ def daemon_status() -> None:
 @main.command()
 @click.option("--reason", default="manual", show_default=True)
 @click.option("--dry-run", is_flag=True, help="Build prompt + state files, but don't invoke claude.")
-def tick_cmd(reason: str, dry_run: bool) -> None:
+@click.option("--mode", type=click.Choice(["implementation", "investigation"]), default=None,
+              help="Override the auto-selected tick mode.")
+def tick_cmd(reason: str, dry_run: bool, mode: str | None) -> None:
     """Fire one tick now (bypassing the next_tick schedule)."""
     setup_logging(quiet_console=False)
-    exit_code, log_path = tick.run_tick(reason=reason, dry_run=dry_run)
-    console.print(f"exit_code={exit_code} log={log_path}")
+    if mode is None:
+        from . import daemon as daemon_mod
+        mode = daemon_mod._select_mode()
+        console.print(f"[dim]auto-selected mode: {mode}[/dim]")
+    exit_code, log_path = tick.run_tick(reason=reason, dry_run=dry_run, mode=mode)
+    console.print(f"exit_code={exit_code} log={log_path} mode={mode}")
 
 
 main.add_command(tick_cmd, name="tick")

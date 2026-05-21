@@ -79,6 +79,19 @@ def _check_regression(pre_pct: float | None, post_pct: float | None) -> None:
         )
 
 
+def _select_mode() -> str:
+    """Alternate ticks between IMPLEMENTATION (bulk new matches) and INVESTIGATION
+    (surgical fixes + theory). Bias toward investigation only after an
+    implementation tick produced commits — so a back-to-back blank implementation
+    tick doesn't trap the bot in low-yield surgical work."""
+    last = db.last_completed_mode()
+    if last == "implementation":
+        return "investigation"
+    # last is None, "investigation", or unknown -> default to implementation so the
+    # first scheduled tick after deploy / restart aims for bulk matches.
+    return "implementation"
+
+
 def _do_tick(reason: str) -> bool:
     """Acquire lock, run a tick, handle next_tick fallback. Returns True if Claude ran."""
     global _tick_inflight, _heartbeat_inflight_since
@@ -97,11 +110,14 @@ def _do_tick(reason: str) -> bool:
             pre_pct = pre_snap.fuzzy_match_pct if pre_snap else None
             pre_nt = sched_mod.read()
 
+            mode = _select_mode()
+            log.info("dispatching tick mode=%s reason=%s", mode, reason)
+
             _tick_inflight = True
             try:
                 try:
-                    exit_code, log_path = tick.run_tick(reason)
-                    log.info("tick reason=%s exit=%s log=%s", reason, exit_code, log_path)
+                    exit_code, log_path = tick.run_tick(reason, mode=mode)
+                    log.info("tick reason=%s mode=%s exit=%s log=%s", reason, mode, exit_code, log_path)
                 except Exception as e:
                     log.exception("tick crashed: %s", e)
                     exit_code = 1

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS ticks (
     ended_at TEXT,
     exit_code INTEGER,
     summary TEXT,
-    log_path TEXT
+    log_path TEXT,
+    mode TEXT
 );
 
 CREATE TABLE IF NOT EXISTS attempts (
@@ -90,18 +91,31 @@ def init_db(reset: bool = False) -> None:
         SETTINGS.db_path.unlink()
     with connect() as c:
         c.executescript(SCHEMA)
+        # Forward-only migrations for columns added after first deploy.
+        cols = {row[1] for row in c.execute("PRAGMA table_info(ticks)").fetchall()}
+        if "mode" not in cols:
+            c.execute("ALTER TABLE ticks ADD COLUMN mode TEXT")
 
 
 # ── Tick helpers ──────────────────────────────────────────────────────────
 
 
-def insert_tick(reason: str, started_at: str) -> int:
+def insert_tick(reason: str, started_at: str, mode: str | None = None) -> int:
     with connect() as c:
         cur = c.execute(
-            "INSERT INTO ticks (reason, started_at) VALUES (?, ?)",
-            (reason, started_at),
+            "INSERT INTO ticks (reason, started_at, mode) VALUES (?, ?, ?)",
+            (reason, started_at, mode),
         )
         return cur.lastrowid
+
+
+def last_completed_mode() -> str | None:
+    """Mode of the most recently *completed* tick (exit_code IS NOT NULL)."""
+    with connect() as c:
+        row = c.execute(
+            "SELECT mode FROM ticks WHERE ended_at IS NOT NULL AND mode IS NOT NULL ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return row["mode"] if row else None
 
 
 def finish_tick(tick_id: int, ended_at: str, exit_code: int, summary: str, log_path: str) -> None:
