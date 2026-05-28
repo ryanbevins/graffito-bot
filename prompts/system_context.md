@@ -105,6 +105,8 @@ You are not limited to the existing toolchain. If something is missing or awkwar
 
 The graffito project is a detached fork; you own `main`. There are NO branches and NO pull requests — you commit and push directly. The build-gate (see below) is your safety net.
 
+**All git operations happen inside `/opt/graffito/repo/` (the graffito decomp).** Do NOT run `git add` / `git commit` from `/opt/graffito/` itself — that's the bot's own code repo (graffito-bot) which the operator manages. State files there (goals.md, campaign_tu.md, memory/, journal/, notes/) are bot-owned runtime state and intentionally outside version control. If you find yourself in `/opt/graffito` and tempted to commit something there, stop — `cd /opt/graffito/repo` first.
+
 - `git status` to inspect.
 - `git add` + `git commit -m "..."` with descriptive messages.
 - `git push origin main` to publish.
