@@ -687,11 +687,12 @@ _INDEX_HTML = r"""<!doctype html>
 <body>
 <header>
   <h1>graffito</h1>
-  <span class="stat"><b id="pct">—</b> fuzzy match</span>
+  <span class="stat"><b id="pct">—</b> fuzzy</span>
+  <span class="stat"><b id="pct-code">—</b> code</span>
+  <span class="stat"><b id="pct-fns">—</b> fns</span>
+  <span class="stat"><b id="pct-units">—</b> units</span>
   <span class="stat" id="delta">Δ24h: —</span>
   <span class="stat" id="eta" title="Linear projection from progress_snapshots — improves with more data.">ETA: —</span>
-  <span class="stat" id="fns">fns: —</span>
-  <span class="stat" id="units">units: —</span>
   <span class="stat" id="daemon-pill"></span>
   <span class="stat" id="next-tick"></span>
   <span style="margin-left:auto"><button id="pause-btn" class="pause">Pause</button></span>
@@ -715,6 +716,19 @@ _INDEX_HTML = r"""<!doctype html>
     <h2>
       Progress over time
       <span class="controls">
+        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); padding:0 8px 0 0;">
+          <input type="checkbox" data-series="fuzzy" checked> <span style="color:#58a6ff;">fuzzy</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); padding:0 8px 0 0;">
+          <input type="checkbox" data-series="code"> <span style="color:#3fb950;">code</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); padding:0 8px 0 0;">
+          <input type="checkbox" data-series="fns" checked> <span style="color:#d29922;">fns</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); padding:0 8px 0 0;">
+          <input type="checkbox" data-series="units"> <span style="color:#bc8cff;">units</span>
+        </label>
+        <span style="width:8px"></span>
         <button data-range="24h">24h</button>
         <button data-range="7d" class="active">7d</button>
         <button data-range="30d">30d</button>
@@ -957,17 +971,31 @@ async function refreshEta() {
     `Projection assumes the current pace holds — live updates with each tick, all-time is more stable.`;
 }
 
+function pctOf(num, denom) {
+  if (num === null || denom === null || !denom) return null;
+  return (num / denom) * 100;
+}
+
 async function refreshStatus() {
   const s = await jget("/api/status");
   document.getElementById("pct").textContent = fmtPct(s.fuzzy_match_pct);
+
+  const codePct = pctOf(s.matched_code, s.total_code);
+  const fnsPct  = pctOf(s.matched_functions, s.total_functions);
+  const unitsPct = pctOf(s.complete_units, s.total_units);
+  document.getElementById("pct-code").textContent  = codePct === null ? "—" : codePct.toFixed(2) + "%";
+  document.getElementById("pct-fns").textContent   = fnsPct  === null ? "—" : fnsPct.toFixed(2)  + "%";
+  document.getElementById("pct-units").textContent = unitsPct === null ? "—" : unitsPct.toFixed(1) + "%";
+  document.getElementById("pct-code").title  = s.matched_code != null ? `${s.matched_code.toLocaleString()} / ${s.total_code.toLocaleString()} matched bytes (byte-perfect)` : "";
+  document.getElementById("pct-fns").title   = s.matched_functions != null ? `${s.matched_functions} / ${s.total_functions} functions fully matched` : "";
+  document.getElementById("pct-units").title = s.complete_units != null ? `${s.complete_units} / ${s.total_units} TUs fully complete (100% all sections)` : "";
+
   const dEl = document.getElementById("delta");
   if (s.delta_24h === null) { dEl.textContent = "Δ24h: —"; }
   else {
     dEl.textContent = "Δ24h: " + fmtSign(s.delta_24h);
     dEl.className = "stat " + (s.delta_24h >= 0 ? "pos" : "neg");
   }
-  document.getElementById("fns").textContent = "fns: " + (s.matched_functions ?? "—") + "/" + (s.total_functions ?? "—");
-  document.getElementById("units").textContent = "units: " + (s.complete_units ?? "—") + "/" + (s.total_units ?? "—");
 
   const dpill = document.getElementById("daemon-pill");
   const d = s.daemon || {};
@@ -990,23 +1018,58 @@ async function refreshStatus() {
   else { btn.textContent = "Pause"; btn.className = "pause"; }
 }
 
+const SERIES_DEFS = {
+  fuzzy: { label: "Fuzzy match %",       color: "#58a6ff", get: (d, totals) => d.fuzzy_pct },
+  code:  { label: "Matched code %",      color: "#3fb950", get: (d, totals) => d.matched_code != null && totals.total_code ? d.matched_code / totals.total_code * 100 : null },
+  fns:   { label: "Matched functions %", color: "#d29922", get: (d, totals) => d.matched_functions != null && totals.total_functions ? d.matched_functions / totals.total_functions * 100 : null },
+  units: { label: "Complete units %",    color: "#bc8cff", get: (d, totals) => d.complete_units != null && totals.total_units ? d.complete_units / totals.total_units * 100 : null },
+};
+const SERIES_ENABLED = { fuzzy: true, code: false, fns: true, units: false };
+
+let _lastSeriesTotals = { total_code: 1, total_functions: 1, total_units: 1 };
+
+function _buildDatasets(data) {
+  const totals = _lastSeriesTotals;
+  const result = [];
+  for (const key of Object.keys(SERIES_DEFS)) {
+    if (!SERIES_ENABLED[key]) continue;
+    const def = SERIES_DEFS[key];
+    result.push({
+      label: def.label,
+      data: data.map(d => def.get(d, totals)),
+      borderColor: def.color,
+      backgroundColor: def.color.replace(")", ",0.08)").replace("rgb(", "rgba(").replace(/^#/, "") ? def.color + "14" : def.color,
+      tension: 0.15,
+      fill: false,
+      pointRadius: 0,
+      borderWidth: 1.6,
+    });
+  }
+  return result;
+}
+
 async function refreshChart() {
-  const data = await jget("/api/progress_series?range=" + currentRange + authQ_amp());
-  const labels = data.map(d => ts(d.ts, currentRange === "24h" ? "short" : "long"));
-  const fuzzy = data.map(d => d.fuzzy_pct);
+  const [series, status] = await Promise.all([
+    jget("/api/progress_series?range=" + currentRange + authQ_amp()),
+    jget("/api/status"),
+  ]);
+  // Use latest status totals to convert raw counts in older snapshots into %
+  _lastSeriesTotals = {
+    total_code: status.total_code || 1,
+    total_functions: status.total_functions || 1,
+    total_units: status.total_units || 1,
+  };
+  const labels = series.map(d => ts(d.ts, currentRange === "24h" ? "short" : "long"));
+  const datasets = _buildDatasets(series);
   if (!chart) {
     const ctx = document.getElementById("chart").getContext("2d");
     chart = new Chart(ctx, {
       type: "line",
-      data: { labels, datasets: [{
-        label: "Fuzzy match %",
-        data: fuzzy,
-        borderColor: "#58a6ff", backgroundColor: "rgba(88,166,255,0.08)",
-        tension: 0.15, fill: true, pointRadius: 0,
-      }] },
+      data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false } },
+        interaction: { mode: "index", intersect: false },
         scales: {
           x: { ticks: { color: "#8b949e", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,0.04)" } },
           y: { ticks: { color: "#8b949e", callback: v => v.toFixed(2) + "%" }, grid: { color: "rgba(255,255,255,0.04)" } },
@@ -1015,7 +1078,7 @@ async function refreshChart() {
     });
   } else {
     chart.data.labels = labels;
-    chart.data.datasets[0].data = fuzzy;
+    chart.data.datasets = datasets;
     chart.update();
   }
 }
@@ -1477,6 +1540,13 @@ document.querySelectorAll("[data-range]").forEach(btn => {
     currentRange = btn.dataset.range;
     document.querySelectorAll("[data-range]").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
+    refreshChart();
+  });
+});
+
+document.querySelectorAll("[data-series]").forEach(cb => {
+  cb.addEventListener("change", () => {
+    SERIES_ENABLED[cb.dataset.series] = cb.checked;
     refreshChart();
   });
 });
