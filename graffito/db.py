@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS progress_snapshots (
     total_functions INTEGER,
     complete_units INTEGER,
     total_units INTEGER,
+    complete_code INTEGER,
     commit_sha TEXT,
     source TEXT NOT NULL CHECK (source IN ('pre_tick','post_tick','periodic','boot'))
 );
@@ -95,6 +96,9 @@ def init_db(reset: bool = False) -> None:
         cols = {row[1] for row in c.execute("PRAGMA table_info(ticks)").fetchall()}
         if "mode" not in cols:
             c.execute("ALTER TABLE ticks ADD COLUMN mode TEXT")
+        snap_cols = {row[1] for row in c.execute("PRAGMA table_info(progress_snapshots)").fetchall()}
+        if "complete_code" not in snap_cols:
+            c.execute("ALTER TABLE progress_snapshots ADD COLUMN complete_code INTEGER")
 
 
 # ── Tick helpers ──────────────────────────────────────────────────────────
@@ -151,14 +155,15 @@ def insert_snapshot(
     total_units: int | None,
     commit_sha: str | None,
     source: str,
+    complete_code: int | None = None,
 ) -> int:
     with connect() as c:
         cur = c.execute(
             """INSERT INTO progress_snapshots
                (recorded_at, fuzzy_match_pct, matched_code, total_code,
                 matched_functions, total_functions, complete_units, total_units,
-                commit_sha, source)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                complete_code, commit_sha, source)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 now_iso(),
                 fuzzy_match_pct,
@@ -168,6 +173,7 @@ def insert_snapshot(
                 total_functions,
                 complete_units,
                 total_units,
+                complete_code,
                 commit_sha,
                 source,
             ),

@@ -25,6 +25,7 @@ def record(source: str, commit_sha: str | None = None, path: Path | None = None)
         total_functions=summary.total_functions,
         complete_units=summary.complete_units,
         total_units=summary.total_units,
+        complete_code=summary.complete_code,
         commit_sha=commit_sha,
         source=source,
     )

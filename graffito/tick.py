@@ -69,6 +69,7 @@ def run_tick(reason: str, dry_run: bool = False, mode: str | None = None) -> tup
             total_functions=pre_snap.total_functions,
             complete_units=pre_snap.complete_units,
             total_units=pre_snap.total_units,
+            complete_code=pre_snap.complete_code,
             commit_sha=None,
             source="pre_tick",
         )
@@ -182,6 +183,7 @@ def run_tick(reason: str, dry_run: bool = False, mode: str | None = None) -> tup
             total_functions=post_snap.total_functions,
             complete_units=post_snap.complete_units,
             total_units=post_snap.total_units,
+            complete_code=post_snap.complete_code,
             commit_sha=head_sha,
             source="post_tick",
         )

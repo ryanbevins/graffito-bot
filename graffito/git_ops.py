@@ -137,6 +137,7 @@ def push_main(tick_id: int | None = None, before_pct: float | None = None) -> st
             total_functions=summary.total_functions,
             complete_units=summary.complete_units,
             total_units=summary.total_units,
+            complete_code=summary.complete_code,
             commit_sha=sha_before_push,
             source="post_tick",
         )

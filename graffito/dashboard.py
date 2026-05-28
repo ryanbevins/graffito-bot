@@ -60,6 +60,7 @@ def api_status(request: Request) -> JSONResponse:
         "fuzzy_match_pct": snap.fuzzy_match_pct if snap else None,
         "matched_code": snap.matched_code if snap else None,
         "total_code": snap.total_code if snap else None,
+        "complete_code": snap.complete_code if snap else None,
         "matched_functions": snap.matched_functions if snap else None,
         "total_functions": snap.total_functions if snap else None,
         "complete_units": snap.complete_units if snap else None,
@@ -178,6 +179,7 @@ def api_progress_series(request: Request, range: str = "7d") -> JSONResponse:
             "matched_code": r["matched_code"],
             "matched_functions": r["matched_functions"],
             "complete_units": r["complete_units"],
+            "complete_code": r["complete_code"] if "complete_code" in r.keys() else None,
             "source": r["source"],
         }
         for r in rows
@@ -691,6 +693,7 @@ _INDEX_HTML = r"""<!doctype html>
   <span class="stat"><b id="pct-code">—</b> code</span>
   <span class="stat"><b id="pct-fns">—</b> fns</span>
   <span class="stat"><b id="pct-units">—</b> units</span>
+  <span class="stat"><b id="pct-linked">—</b> linked</span>
   <span class="stat" id="delta">Δ24h: —</span>
   <span class="stat" id="eta" title="Linear projection from progress_snapshots — improves with more data.">ETA: —</span>
   <span class="stat" id="daemon-pill"></span>
@@ -727,6 +730,9 @@ _INDEX_HTML = r"""<!doctype html>
         </label>
         <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); padding:0 8px 0 0;">
           <input type="checkbox" data-series="units"> <span style="color:#bc8cff;">units</span>
+        </label>
+        <label style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--dim); padding:0 8px 0 0;">
+          <input type="checkbox" data-series="linked"> <span style="color:#f85149;">linked</span>
         </label>
         <span style="width:8px"></span>
         <button data-range="24h">24h</button>
@@ -983,12 +989,15 @@ async function refreshStatus() {
   const codePct = pctOf(s.matched_code, s.total_code);
   const fnsPct  = pctOf(s.matched_functions, s.total_functions);
   const unitsPct = pctOf(s.complete_units, s.total_units);
+  const linkedPct = pctOf(s.complete_code, s.total_code);
   document.getElementById("pct-code").textContent  = codePct === null ? "—" : codePct.toFixed(2) + "%";
   document.getElementById("pct-fns").textContent   = fnsPct  === null ? "—" : fnsPct.toFixed(2)  + "%";
   document.getElementById("pct-units").textContent = unitsPct === null ? "—" : unitsPct.toFixed(1) + "%";
+  document.getElementById("pct-linked").textContent = linkedPct === null ? "—" : linkedPct.toFixed(2) + "%";
   document.getElementById("pct-code").title  = s.matched_code != null ? `${s.matched_code.toLocaleString()} / ${s.total_code.toLocaleString()} matched bytes (byte-perfect)` : "";
   document.getElementById("pct-fns").title   = s.matched_functions != null ? `${s.matched_functions} / ${s.total_functions} functions fully matched` : "";
   document.getElementById("pct-units").title = s.complete_units != null ? `${s.complete_units} / ${s.total_units} TUs fully complete (100% all sections)` : "";
+  document.getElementById("pct-linked").title = s.complete_code != null ? `${s.complete_code.toLocaleString()} / ${s.total_code.toLocaleString()} code bytes in 100%-complete TUs (linker-ready)` : "complete_code only populated on snapshots taken after this release; will fill in over the next ~1h";
 
   const dEl = document.getElementById("delta");
   if (s.delta_24h === null) { dEl.textContent = "Δ24h: —"; }
@@ -1019,12 +1028,13 @@ async function refreshStatus() {
 }
 
 const SERIES_DEFS = {
-  fuzzy: { label: "Fuzzy match %",       color: "#58a6ff", get: (d, totals) => d.fuzzy_pct },
-  code:  { label: "Matched code %",      color: "#3fb950", get: (d, totals) => d.matched_code != null && totals.total_code ? d.matched_code / totals.total_code * 100 : null },
-  fns:   { label: "Matched functions %", color: "#d29922", get: (d, totals) => d.matched_functions != null && totals.total_functions ? d.matched_functions / totals.total_functions * 100 : null },
-  units: { label: "Complete units %",    color: "#bc8cff", get: (d, totals) => d.complete_units != null && totals.total_units ? d.complete_units / totals.total_units * 100 : null },
+  fuzzy:  { label: "Fuzzy match %",       color: "#58a6ff", get: (d, totals) => d.fuzzy_pct },
+  code:   { label: "Matched code %",      color: "#3fb950", get: (d, totals) => d.matched_code != null && totals.total_code ? d.matched_code / totals.total_code * 100 : null },
+  fns:    { label: "Matched functions %", color: "#d29922", get: (d, totals) => d.matched_functions != null && totals.total_functions ? d.matched_functions / totals.total_functions * 100 : null },
+  units:  { label: "Complete units %",    color: "#bc8cff", get: (d, totals) => d.complete_units != null && totals.total_units ? d.complete_units / totals.total_units * 100 : null },
+  linked: { label: "Linked %",            color: "#f85149", get: (d, totals) => d.complete_code != null && totals.total_code ? d.complete_code / totals.total_code * 100 : null },
 };
-const SERIES_ENABLED = { fuzzy: true, code: false, fns: true, units: false };
+const SERIES_ENABLED = { fuzzy: true, code: false, fns: true, units: false, linked: false };
 
 let _lastSeriesTotals = { total_code: 1, total_functions: 1, total_units: 1 };
 

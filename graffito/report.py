@@ -25,6 +25,7 @@ class ReportSummary:
     fuzzy_match_pct: float
     total_code: int
     matched_code: int
+    complete_code: int
     matched_functions: int
     total_functions: int
     total_units: int
@@ -36,6 +37,7 @@ class ReportSummary:
             "fuzzy_match_pct": self.fuzzy_match_pct,
             "matched_code": self.matched_code,
             "total_code": self.total_code,
+            "complete_code": self.complete_code,
             "matched_functions": self.matched_functions,
             "total_functions": self.total_functions,
             "complete_units": self.complete_units,
@@ -83,6 +85,7 @@ def load(path: Path) -> ReportSummary:
         fuzzy_match_pct=float(measures.get("fuzzy_match_percent", 0.0) or 0.0),
         total_code=_as_int(measures.get("total_code")),
         matched_code=_as_int(measures.get("matched_code")),
+        complete_code=_as_int(measures.get("complete_code")),
         matched_functions=_as_int(measures.get("matched_functions")),
         total_functions=_as_int(measures.get("total_functions")),
         total_units=_as_int(measures.get("total_units")),
