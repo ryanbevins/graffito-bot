@@ -51,7 +51,7 @@ class Settings(BaseModel):
 
     # Claude
     claude_bin: str = os.getenv("CLAUDE_BIN", "claude")
-    claude_model: str = os.getenv("CLAUDE_MODEL", "opus")
+    claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
 
     # Daemon tuning (defaults from the plan)
