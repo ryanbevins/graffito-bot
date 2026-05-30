@@ -56,11 +56,12 @@ def api_status(request: Request) -> JSONResponse:
         first = earlier[0]
         delta_24h = snap.fuzzy_match_pct - float(first["fuzzy_match_pct"])
 
-    from .config import read_active_agent, read_tick_interval_minutes, VALID_AGENTS
+    from .config import read_active_agent, read_tick_interval_minutes, read_codex_fast_mode, VALID_AGENTS
     return JSONResponse({
         "active_agent": read_active_agent(),
         "valid_agents": list(VALID_AGENTS),
         "tick_interval_minutes": read_tick_interval_minutes(),
+        "codex_fast_mode": read_codex_fast_mode(),
         "fuzzy_match_pct": snap.fuzzy_match_pct if snap else None,
         "matched_code": snap.matched_code if snap else None,
         "total_code": snap.total_code if snap else None,
@@ -553,6 +554,22 @@ def api_interval_get(request: Request) -> JSONResponse:
     return JSONResponse({"minutes": read_tick_interval_minutes()})
 
 
+@app.post("/api/codex_fast/set")
+async def api_codex_fast_set(request: Request) -> JSONResponse:
+    _check_auth(request)
+    from .config import write_codex_fast_mode, read_codex_fast_mode
+    data = await request.json()
+    write_codex_fast_mode(bool(data.get("enabled")))
+    return JSONResponse({"enabled": read_codex_fast_mode()})
+
+
+@app.get("/api/codex_fast")
+def api_codex_fast_get(request: Request) -> JSONResponse:
+    _check_auth(request)
+    from .config import read_codex_fast_mode
+    return JSONResponse({"enabled": read_codex_fast_mode()})
+
+
 @app.post("/api/pause")
 async def api_pause(request: Request) -> JSONResponse:
     _check_auth(request)
@@ -777,6 +794,9 @@ _INDEX_HTML = r"""<!doctype html>
       <option value="claude">claude</option>
       <option value="codex">codex</option>
     </select>
+    <label id="codex-fast-label" style="display:none; align-items:center; gap:4px; font-size:11px; cursor:pointer;" title="Codex 'fast' service tier — priority queue, lower latency per token. Works with xhigh reasoning effort.">
+      <input type="checkbox" id="codex-fast-checkbox" style="margin:0;"> fast
+    </label>
   </span>
   <span class="stat" style="display:inline-flex;align-items:center;gap:6px;">
     every
@@ -1126,6 +1146,11 @@ async function refreshStatus() {
     const v = String(s.tick_interval_minutes);
     if ([...intEl.options].some(o => o.value === v)) intEl.value = v;
   }
+  // Codex 'fast' checkbox — only meaningful when codex is the active agent
+  const fastLabel = document.getElementById("codex-fast-label");
+  const fastCb = document.getElementById("codex-fast-checkbox");
+  fastLabel.style.display = (s.active_agent === "codex") ? "inline-flex" : "none";
+  if (document.activeElement !== fastCb) fastCb.checked = !!s.codex_fast_mode;
 
   const btn = document.getElementById("pause-btn");
   if (d.paused) { btn.textContent = "Resume"; btn.className = "resume"; }
@@ -1708,6 +1733,15 @@ document.getElementById("interval-select").addEventListener("change", async (e) 
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({minutes: parseInt(e.target.value, 10)}),
+  });
+  refreshStatus();
+});
+
+document.getElementById("codex-fast-checkbox").addEventListener("change", async (e) => {
+  await fetch("/api/codex_fast/set" + authQ(), {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({enabled: e.target.checked}),
   });
   refreshStatus();
 });

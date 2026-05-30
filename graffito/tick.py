@@ -88,6 +88,11 @@ def _build_agent_cmd(agent: str, prompt: str, log_path: Path) -> tuple[list[str]
         # captures the agent's reasoning, useful for journal/notes review.
         if SETTINGS.codex_reasoning_summary:
             cmd += ["-c", f'model_reasoning_summary="{SETTINGS.codex_reasoning_summary}"']
+        # Fast service tier (priority queue, lower per-token latency). Operator
+        # toggle via dashboard; compatible with xhigh reasoning.
+        from .config import read_codex_fast_mode
+        if read_codex_fast_mode():
+            cmd += ["-c", 'service_tier="fast"']
         if SETTINGS.codex_model:
             cmd += ["-m", SETTINGS.codex_model]
         cmd.append(prompt)

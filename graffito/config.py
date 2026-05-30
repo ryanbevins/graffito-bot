@@ -40,6 +40,7 @@ class Settings(BaseModel):
     # Operator-controlled runtime settings (changeable via dashboard)
     active_agent_file: Path = ROOT / "state" / "active_agent.md"
     tick_interval_json: Path = ROOT / "state" / "tick_interval.json"
+    codex_fast_mode_json: Path = ROOT / "state" / "codex_fast_mode.json"
 
     # Daemon mutexes / flags
     tick_lock: Path = ROOT / "state" / ".tick.lock"
@@ -149,4 +150,25 @@ def write_tick_interval_minutes(minutes: int) -> None:
     SETTINGS.tick_interval_json.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS.tick_interval_json.write_text(
         json.dumps({"minutes": int(minutes)}, indent=2), encoding="utf-8"
+    )
+
+
+def read_codex_fast_mode() -> bool:
+    """Whether Codex invocations should request the fast service tier (priority queue,
+    lower latency per token). Compatible with xhigh reasoning effort."""
+    import json
+    try:
+        data = json.loads(SETTINGS.codex_fast_mode_json.read_text(encoding="utf-8"))
+        return bool(data.get("enabled"))
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def write_codex_fast_mode(enabled: bool) -> None:
+    import json
+    SETTINGS.codex_fast_mode_json.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS.codex_fast_mode_json.write_text(
+        json.dumps({"enabled": bool(enabled)}, indent=2), encoding="utf-8"
     )

@@ -19,6 +19,7 @@ state/goals.md
 state/campaign_tu.md
 state/active_agent.md
 state/tick_interval.json
+state/codex_fast_mode.json
 state/journal/
 state/notes/
 state/memory/
