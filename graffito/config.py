@@ -37,6 +37,10 @@ class Settings(BaseModel):
     next_tick_json: Path = ROOT / "state" / "next_tick.json"
     campaign_tu_md: Path = ROOT / "state" / "campaign_tu.md"
 
+    # Operator-controlled runtime settings (changeable via dashboard)
+    active_agent_file: Path = ROOT / "state" / "active_agent.md"
+    tick_interval_json: Path = ROOT / "state" / "tick_interval.json"
+
     # Daemon mutexes / flags
     tick_lock: Path = ROOT / "state" / ".tick.lock"
     daemon_pid: Path = ROOT / "state" / ".daemon.pid"
@@ -53,6 +57,13 @@ class Settings(BaseModel):
     claude_bin: str = os.getenv("CLAUDE_BIN", "claude")
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-4-8")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+
+    # Codex (OpenAI)
+    codex_bin: str = os.getenv("CODEX_BIN", "codex")
+    codex_model: str = os.getenv("CODEX_MODEL", "")  # empty → codex picks default (gpt-5 / gpt-5.5)
+
+    # Default agent if state/active_agent.md is absent / unreadable
+    default_agent: str = os.getenv("DEFAULT_AGENT", "claude")
 
     # Daemon tuning (defaults from the plan)
     heartbeat_seconds: int = int(os.getenv("HEARTBEAT_SECONDS", "60"))
@@ -89,3 +100,51 @@ def ensure_dirs() -> None:
         SETTINGS.prompts_dir,
     ):
         p.mkdir(parents=True, exist_ok=True)
+
+
+VALID_AGENTS = ("claude", "codex")
+
+
+def read_active_agent() -> str:
+    """Read state/active_agent.md (one line, just the agent name)."""
+    try:
+        agent = SETTINGS.active_agent_file.read_text(encoding="utf-8").strip().lower()
+        if agent in VALID_AGENTS:
+            return agent
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return SETTINGS.default_agent
+
+
+def write_active_agent(agent: str) -> None:
+    if agent not in VALID_AGENTS:
+        raise ValueError(f"unknown agent {agent!r}; valid: {VALID_AGENTS}")
+    SETTINGS.active_agent_file.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS.active_agent_file.write_text(agent + "\n", encoding="utf-8")
+
+
+def read_tick_interval_minutes() -> int:
+    """Operator-overridable default for next_tick when Claude/Codex doesn't pick one."""
+    import json
+    try:
+        data = json.loads(SETTINGS.tick_interval_json.read_text(encoding="utf-8"))
+        m = int(data.get("minutes"))
+        if m > 0:
+            return m
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return SETTINGS.default_next_tick_minutes
+
+
+def write_tick_interval_minutes(minutes: int) -> None:
+    import json
+    if minutes <= 0 or minutes > 24 * 60:
+        raise ValueError("minutes must be in (0, 1440]")
+    SETTINGS.tick_interval_json.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS.tick_interval_json.write_text(
+        json.dumps({"minutes": int(minutes)}, indent=2), encoding="utf-8"
+    )

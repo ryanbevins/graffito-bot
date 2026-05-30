@@ -56,7 +56,11 @@ def api_status(request: Request) -> JSONResponse:
         first = earlier[0]
         delta_24h = snap.fuzzy_match_pct - float(first["fuzzy_match_pct"])
 
+    from .config import read_active_agent, read_tick_interval_minutes, VALID_AGENTS
     return JSONResponse({
+        "active_agent": read_active_agent(),
+        "valid_agents": list(VALID_AGENTS),
+        "tick_interval_minutes": read_tick_interval_minutes(),
         "fuzzy_match_pct": snap.fuzzy_match_pct if snap else None,
         "matched_code": snap.matched_code if snap else None,
         "total_code": snap.total_code if snap else None,
@@ -485,6 +489,48 @@ def api_tick_log(request: Request, tick_id: int) -> PlainTextResponse:
     return PlainTextResponse(p.read_text(encoding="utf-8", errors="replace"))
 
 
+@app.post("/api/agent/set")
+async def api_agent_set(request: Request) -> JSONResponse:
+    _check_auth(request)
+    from .config import write_active_agent, read_active_agent, VALID_AGENTS
+    data = await request.json()
+    agent = (data.get("agent") or "").strip().lower()
+    if agent not in VALID_AGENTS:
+        raise HTTPException(status_code=400, detail=f"agent must be one of {VALID_AGENTS}")
+    write_active_agent(agent)
+    return JSONResponse({"agent": read_active_agent()})
+
+
+@app.get("/api/agent")
+def api_agent_get(request: Request) -> JSONResponse:
+    _check_auth(request)
+    from .config import read_active_agent, VALID_AGENTS
+    return JSONResponse({"agent": read_active_agent(), "valid": list(VALID_AGENTS)})
+
+
+@app.post("/api/interval/set")
+async def api_interval_set(request: Request) -> JSONResponse:
+    _check_auth(request)
+    from .config import write_tick_interval_minutes, read_tick_interval_minutes
+    data = await request.json()
+    try:
+        minutes = int(data.get("minutes"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="minutes must be a positive integer")
+    try:
+        write_tick_interval_minutes(minutes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return JSONResponse({"minutes": read_tick_interval_minutes()})
+
+
+@app.get("/api/interval")
+def api_interval_get(request: Request) -> JSONResponse:
+    _check_auth(request)
+    from .config import read_tick_interval_minutes
+    return JSONResponse({"minutes": read_tick_interval_minutes()})
+
+
 @app.post("/api/pause")
 async def api_pause(request: Request) -> JSONResponse:
     _check_auth(request)
@@ -696,6 +742,24 @@ _INDEX_HTML = r"""<!doctype html>
   <span class="stat"><b id="pct-linked">—</b> linked</span>
   <span class="stat" id="delta">Δ24h: —</span>
   <span class="stat" id="eta" title="Linear projection from progress_snapshots — improves with more data.">ETA: —</span>
+  <span class="stat" style="display:inline-flex;align-items:center;gap:6px;">
+    agent
+    <select id="agent-select" style="background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);padding:2px 8px;border-radius:4px;font:inherit;font-size:11px;">
+      <option value="claude">claude</option>
+      <option value="codex">codex</option>
+    </select>
+  </span>
+  <span class="stat" style="display:inline-flex;align-items:center;gap:6px;">
+    every
+    <select id="interval-select" style="background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);padding:2px 8px;border-radius:4px;font:inherit;font-size:11px;">
+      <option value="5">5 min</option>
+      <option value="15">15 min</option>
+      <option value="30">30 min</option>
+      <option value="60">60 min</option>
+      <option value="120">2 h</option>
+      <option value="240">4 h</option>
+    </select>
+  </span>
   <span class="stat" id="daemon-pill"></span>
   <span class="stat" id="next-tick"></span>
   <span style="margin-left:auto"><button id="pause-btn" class="pause">Pause</button></span>
@@ -748,7 +812,7 @@ _INDEX_HTML = r"""<!doctype html>
     <h2>Recent ticks</h2>
     <div class="body">
       <table id="ticks-table"><thead><tr>
-        <th>ID</th><th>Reason</th><th>Started</th><th>Ended</th><th>Exit</th><th class="msg">Summary</th>
+        <th>ID</th><th>Agent</th><th>Mode</th><th>Reason</th><th>Started</th><th>Ended</th><th>Exit</th><th class="msg">Summary</th>
       </tr></thead><tbody></tbody></table>
     </div>
   </section>
@@ -1022,6 +1086,15 @@ async function refreshStatus() {
   }
   document.getElementById("last-snapshot").textContent = "last snapshot: " + ts(s.last_snapshot_at);
 
+  // agent + interval dropdowns reflect server state (don't clobber if user is mid-edit)
+  const agentEl = document.getElementById("agent-select");
+  if (s.active_agent && document.activeElement !== agentEl) agentEl.value = s.active_agent;
+  const intEl = document.getElementById("interval-select");
+  if (s.tick_interval_minutes && document.activeElement !== intEl) {
+    const v = String(s.tick_interval_minutes);
+    if ([...intEl.options].some(o => o.value === v)) intEl.value = v;
+  }
+
   const btn = document.getElementById("pause-btn");
   if (d.paused) { btn.textContent = "Resume"; btn.className = "resume"; }
   else { btn.textContent = "Pause"; btn.className = "pause"; }
@@ -1106,7 +1179,17 @@ async function refreshTicks() {
     tr.style.cursor = "pointer";
     tr.title = "Click to view full transcript";
     tr.addEventListener("click", () => openTicklog(r.id));
-    tr.innerHTML = `<td>${r.id}</td><td>${r.reason}</td><td>${ts(r.started_at)}</td><td>${ts(r.ended_at)}</td><td>${exitPill}</td><td class="msg">${(r.summary||'').replace(/</g,'&lt;')}</td>`;
+    const agentPill = r.agent === 'codex'
+      ? '<span class="pill yellow">codex</span>'
+      : r.agent === 'claude'
+      ? '<span class="pill blue">claude</span>'
+      : '<span class="pill">—</span>';
+    const modePill = r.mode === 'implementation'
+      ? '<span class="pill green">impl</span>'
+      : r.mode === 'investigation'
+      ? '<span class="pill">inv</span>'
+      : '<span class="pill">—</span>';
+    tr.innerHTML = `<td>${r.id}</td><td>${agentPill}</td><td>${modePill}</td><td>${r.reason}</td><td>${ts(r.started_at)}</td><td>${ts(r.ended_at)}</td><td>${exitPill}</td><td class="msg">${(r.summary||'').replace(/</g,'&lt;')}</td>`;
     tb.appendChild(tr);
   }
 }
@@ -1559,6 +1642,24 @@ document.querySelectorAll("[data-series]").forEach(cb => {
     SERIES_ENABLED[cb.dataset.series] = cb.checked;
     refreshChart();
   });
+});
+
+document.getElementById("agent-select").addEventListener("change", async (e) => {
+  await fetch("/api/agent/set" + authQ(), {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({agent: e.target.value}),
+  });
+  refreshStatus();
+});
+
+document.getElementById("interval-select").addEventListener("change", async (e) => {
+  await fetch("/api/interval/set" + authQ(), {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({minutes: parseInt(e.target.value, 10)}),
+  });
+  refreshStatus();
 });
 
 document.getElementById("pause-btn").addEventListener("click", async () => {

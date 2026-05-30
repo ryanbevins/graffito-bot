@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS ticks (
     exit_code INTEGER,
     summary TEXT,
     log_path TEXT,
-    mode TEXT
+    mode TEXT,
+    agent TEXT
 );
 
 CREATE TABLE IF NOT EXISTS attempts (
@@ -96,6 +97,8 @@ def init_db(reset: bool = False) -> None:
         cols = {row[1] for row in c.execute("PRAGMA table_info(ticks)").fetchall()}
         if "mode" not in cols:
             c.execute("ALTER TABLE ticks ADD COLUMN mode TEXT")
+        if "agent" not in cols:
+            c.execute("ALTER TABLE ticks ADD COLUMN agent TEXT")
         snap_cols = {row[1] for row in c.execute("PRAGMA table_info(progress_snapshots)").fetchall()}
         if "complete_code" not in snap_cols:
             c.execute("ALTER TABLE progress_snapshots ADD COLUMN complete_code INTEGER")
@@ -104,11 +107,11 @@ def init_db(reset: bool = False) -> None:
 # ── Tick helpers ──────────────────────────────────────────────────────────
 
 
-def insert_tick(reason: str, started_at: str, mode: str | None = None) -> int:
+def insert_tick(reason: str, started_at: str, mode: str | None = None, agent: str | None = None) -> int:
     with connect() as c:
         cur = c.execute(
-            "INSERT INTO ticks (reason, started_at, mode) VALUES (?, ?, ?)",
-            (reason, started_at, mode),
+            "INSERT INTO ticks (reason, started_at, mode, agent) VALUES (?, ?, ?, ?)",
+            (reason, started_at, mode, agent),
         )
         return cur.lastrowid
 

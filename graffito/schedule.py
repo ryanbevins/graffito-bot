@@ -57,7 +57,8 @@ def write(when: datetime, reason: str, set_by: str) -> NextTick:
 
 
 def schedule_default() -> NextTick:
-    when = datetime.now(timezone.utc) + timedelta(minutes=SETTINGS.default_next_tick_minutes)
+    from .config import read_tick_interval_minutes
+    when = datetime.now(timezone.utc) + timedelta(minutes=read_tick_interval_minutes())
     return write(when, reason="scheduled", set_by="daemon-default")
 
 

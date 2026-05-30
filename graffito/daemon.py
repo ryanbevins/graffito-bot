@@ -111,13 +111,16 @@ def _do_tick(reason: str) -> bool:
             pre_nt = sched_mod.read()
 
             mode = _select_mode()
-            log.info("dispatching tick mode=%s reason=%s", mode, reason)
+            from .config import read_active_agent
+            active_agent = read_active_agent()
+            log.info("dispatching tick mode=%s agent=%s reason=%s", mode, active_agent, reason)
 
             _tick_inflight = True
             try:
                 try:
-                    exit_code, log_path = tick.run_tick(reason, mode=mode)
-                    log.info("tick reason=%s mode=%s exit=%s log=%s", reason, mode, exit_code, log_path)
+                    exit_code, log_path = tick.run_tick(reason, mode=mode, agent=active_agent)
+                    log.info("tick reason=%s mode=%s agent=%s exit=%s log=%s",
+                             reason, mode, active_agent, exit_code, log_path)
                 except Exception as e:
                     log.exception("tick crashed: %s", e)
                     exit_code = 1
