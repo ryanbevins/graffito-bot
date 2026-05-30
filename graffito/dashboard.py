@@ -623,6 +623,13 @@ _INDEX_HTML = r"""<!doctype html>
   section h2 .controls select option:checked, section h2 .controls select option:hover {
     background: var(--blue); color: #001;
   }
+  /* Header-level selects (agent / interval) live outside any .controls span; style globally. */
+  header select option {
+    background: var(--panel); color: var(--text);
+  }
+  header select option:checked, header select option:hover {
+    background: var(--blue); color: #001;
+  }
   section .body { padding: 12px 14px; max-height: 420px; overflow: auto; }
   section.chart .body { max-height: none; padding: 8px 4px; }
   section.tall .body { max-height: 700px; }

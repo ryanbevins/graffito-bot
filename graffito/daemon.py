@@ -142,18 +142,33 @@ def _do_tick(reason: str) -> bool:
                 post_pct = post_snap.fuzzy_match_pct if post_snap else None
                 _check_regression(pre_pct, post_pct)
 
-                # next_tick fallback
+                # The operator-set interval (state/tick_interval.json) is
+                # authoritative for scheduling — the bot's `next_tick.json`
+                # write is informational. Preserve the bot's `reason` text so
+                # we still see what it intends to work on next, but always
+                # rewrite `wake_at` to `now + interval`. This makes the
+                # dashboard's "every <interval>" picker do what the user
+                # expects regardless of what the agent wrote in the prompt.
+                from .config import read_tick_interval_minutes
+                from datetime import datetime, timedelta, timezone
                 post_nt = sched_mod.read()
-                unchanged = (
-                    post_nt is not None
-                    and pre_nt is not None
-                    and post_nt.set_at == pre_nt.set_at
+                interval_min = read_tick_interval_minutes()
+                bot_reason = (
+                    post_nt.reason
+                    if (post_nt is not None
+                        and pre_nt is not None
+                        and post_nt.set_at != pre_nt.set_at)
+                    else "scheduled"
                 )
-                if post_nt is None or unchanged:
-                    nt = sched_mod.schedule_default()
-                    log.info("next_tick unset by cycle; default = %s", nt.wake_at.isoformat())
-                else:
-                    log.info("next_tick set by %s: %s", post_nt.set_by, post_nt.wake_at.isoformat())
+                nt = sched_mod.write(
+                    when=datetime.now(timezone.utc) + timedelta(minutes=interval_min),
+                    reason=bot_reason,
+                    set_by="operator-interval",
+                )
+                log.info(
+                    "next_tick set by operator-interval (%d min) reason=%s wake_at=%s",
+                    interval_min, bot_reason, nt.wake_at.isoformat(),
+                )
             finally:
                 # Reset the heartbeat start so the post-tick heartbeat tail doesn't
                 # appear to the watchdog as a 30-min-stuck heartbeat.
