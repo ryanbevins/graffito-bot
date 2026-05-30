@@ -489,6 +489,28 @@ def api_tick_log(request: Request, tick_id: int) -> PlainTextResponse:
     return PlainTextResponse(p.read_text(encoding="utf-8", errors="replace"))
 
 
+@app.post("/api/tick/now")
+async def api_tick_now(request: Request) -> JSONResponse:
+    """Force the next scheduled tick to fire on the daemon's next heartbeat
+    (within ~60s). Daemon's tick lock still applies — if a tick is already in
+    flight, this just queues the operator request to fire after it ends."""
+    _check_auth(request)
+    from . import schedule as sched_mod
+    nt = sched_mod.write(
+        when=datetime.now(timezone.utc),
+        reason="operator: manual trigger from dashboard",
+        set_by="operator",
+    )
+    in_flight = SETTINGS.tick_lock.exists()
+    return JSONResponse({
+        "wake_at": nt.wake_at.isoformat(),
+        "reason": nt.reason,
+        "in_flight": in_flight,
+        "note": "queued; daemon dispatches on next heartbeat (≤60s)" if not in_flight
+                else "current tick still running; this trigger queues after it ends",
+    })
+
+
 @app.post("/api/agent/set")
 async def api_agent_set(request: Request) -> JSONResponse:
     _check_auth(request)
@@ -762,7 +784,10 @@ _INDEX_HTML = r"""<!doctype html>
   </span>
   <span class="stat" id="daemon-pill"></span>
   <span class="stat" id="next-tick"></span>
-  <span style="margin-left:auto"><button id="pause-btn" class="pause">Pause</button></span>
+  <span style="margin-left:auto; display:inline-flex; gap:8px;">
+    <button id="tick-now-btn" style="background:var(--blue);color:#001;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font:inherit;font-weight:600;">Run tick now</button>
+    <button id="pause-btn" class="pause">Pause</button>
+  </span>
 </header>
 <main>
   <section class="full live">
@@ -1642,6 +1667,24 @@ document.querySelectorAll("[data-series]").forEach(cb => {
     SERIES_ENABLED[cb.dataset.series] = cb.checked;
     refreshChart();
   });
+});
+
+document.getElementById("tick-now-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("tick-now-btn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Scheduling…";
+  try {
+    const r = await fetch("/api/tick/now" + authQ(), { method: "POST" });
+    const data = await r.json();
+    btn.textContent = data.in_flight ? "Queued (after current)" : "Firing on next heartbeat";
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3000);
+    refreshStatus();
+  } catch (e) {
+    btn.textContent = "Error — see console";
+    console.error(e);
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 3000);
+  }
 });
 
 document.getElementById("agent-select").addEventListener("change", async (e) => {
