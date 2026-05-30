@@ -61,6 +61,8 @@ class Settings(BaseModel):
     # Codex (OpenAI)
     codex_bin: str = os.getenv("CODEX_BIN", "codex")
     codex_model: str = os.getenv("CODEX_MODEL", "")  # empty → codex picks default (gpt-5 / gpt-5.5)
+    codex_reasoning_effort: str = os.getenv("CODEX_REASONING_EFFORT", "xhigh")  # minimal|low|medium|high|xhigh (xhigh is gpt-5+ only)
+    codex_reasoning_summary: str = os.getenv("CODEX_REASONING_SUMMARY", "auto")  # none|auto|concise|detailed
 
     # Default agent if state/active_agent.md is absent / unreadable
     default_agent: str = os.getenv("DEFAULT_AGENT", "claude")

@@ -76,6 +76,13 @@ def _build_agent_cmd(agent: str, prompt: str, log_path: Path) -> tuple[list[str]
             "-s", "workspace-write",
             "-o", str(last_msg_path),
         ]
+        # Reasoning effort (minimal|low|medium|high|xhigh — xhigh is gpt-5+ only).
+        if SETTINGS.codex_reasoning_effort:
+            cmd += ["-c", f'model_reasoning_effort="{SETTINGS.codex_reasoning_effort}"']
+        # Reasoning summaries (none|auto|concise|detailed) so the streamed log
+        # captures the agent's reasoning, useful for journal/notes review.
+        if SETTINGS.codex_reasoning_summary:
+            cmd += ["-c", f'model_reasoning_summary="{SETTINGS.codex_reasoning_summary}"']
         if SETTINGS.codex_model:
             cmd += ["-m", SETTINGS.codex_model]
         cmd.append(prompt)
