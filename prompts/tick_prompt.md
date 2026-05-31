@@ -9,7 +9,7 @@ This is one work cycle. Take it at your own pace — no timeout, no deadline. Qu
 3. **Re-read authoritative docs.** `CLAUDE.md`, `AGENTS.md`, and `docs/MWCC.md` at the repo root. They evolve — the last one you write to yourself.
 
 4. **Decide, constrained by the mode.**
-   - **IMPLEMENTATION mode:** read `state/campaign_tu.md`. If empty / `functionally_complete` / `blocked` → pick ONE new TU, write it to `campaign_tu.md`, **begin work this same tick** (don't pick-and-exit). Otherwise → continue the existing campaign TU. Stop criteria: +0.2% fuzzy gain since tick start, OR campaign TU functionally complete, OR genuinely blocked. Related/dependency TUs are allowed under the carve-out in `tick_focus.md`.
+   - **IMPLEMENTATION mode:** read `state/campaign_tu.md`. If empty / `functionally_complete` / `blocked` → pick ONE new TU, write it to `campaign_tu.md`, **begin work this same tick** (don't pick-and-exit). Otherwise → continue the existing campaign TU. End-of-tick rule: only mark the campaign `functionally_complete` (or `blocked`) when the TU genuinely is. Otherwise leave it `in_progress` and the next IMPL tick continues the same TU. There is **no +0.2% fuzzy threshold** — that rule is removed. Related/dependency TUs are allowed under the carve-out in `tick_focus.md`.
    - **INVESTIGATION mode:** priority 1 is closing leftover codegen polish on the active campaign TU and recent IMPLEMENTATION ticks' shipped TUs. Priority 2 is memory-pattern sweeps + `docs/MWCC.md` hypothesis testing.
    - If you decide to override the mode, journal a one-sentence justification.
 

@@ -138,13 +138,13 @@ IMPLEMENTATION mode is a **multi-tick campaign on a single TU**, not a stub-of-t
 
 The bar for "shipping" a function is **functional correctness**, not byte-perfect match. Read the asm, write C++ that does the same thing. Stack-padding, register coloring, bool/BOOL casts, ternary→if polish, FPR swaps, `addi`/`mr` encoding — all of that is INVESTIGATION-mode work. A function that's logically correct but lands at 40-80% fuzzy is a successful IMPLEMENTATION outcome. File what's left in `state/notes/<tu>.md`; INVESTIGATION ticks close it. The hard "no fake matching" rule still applies — no stack-padding tricks, no goto control flow.
 
-**Stop criteria** (when an IMPLEMENTATION tick may end):
+**How a tick ends** — campaign status drives everything; there is **no per-tick % floor**:
 
-1. ≥ **+0.2% fuzzy match gained** since tick start (compare `report.json` pre/post), OR
-2. The campaign TU is **functionally complete** (mark `Status: functionally_complete` in `campaign_tu.md`), OR
-3. The campaign TU is genuinely **blocked** (missing class hierarchy elsewhere, unreconstructable data table) — explain in the journal, mark `Status: blocked`.
+- **TU functionally complete this tick** → mark `Status: functionally_complete` in `campaign_tu.md`. Next IMPL tick picks a *new* TU.
+- **TU not yet finished this tick** → keep working until a natural checkpoint, then journal + end. Leave `Status: in_progress`. Next IMPL tick continues the *same* TU.
+- **TU is blocked** (real cross-TU dependency you can't resolve here) → mark `Status: blocked` + reason. Next IMPL tick picks a *different* TU.
 
-If none of those hold, **keep working on the same TU**. Implement more functions. Write more source. The user's overriding concern is compute → percent efficiency; ending below the floor wastes the tick's startup overhead.
+"Functionally complete" means every function has correct logic. Byte-perfect codegen is NOT required — that's INVESTIGATION's job. A TU that builds, all functions present, all behavior correct, sits at 40-80% fuzzy → mark it done.
 
 **Working on related/dependency TUs is allowed.** Edit base classes the campaign inherits from, fix sibling TUs the campaign calls into, add shared types/forward-decls to headers. Note them under `## Dependencies touched` in `campaign_tu.md`. What's NOT permitted: silently abandoning the campaign for an unrelated TU because the work got hard — mark `blocked` and exit cleanly instead.
 
