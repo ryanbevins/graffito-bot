@@ -138,13 +138,17 @@ IMPLEMENTATION mode is a **multi-tick campaign on a single TU**, not a stub-of-t
 
 The bar for "shipping" a function is **functional correctness**, not byte-perfect match. Read the asm, write C++ that does the same thing. Stack-padding, register coloring, bool/BOOL casts, ternary→if polish, FPR swaps, `addi`/`mr` encoding — all of that is INVESTIGATION-mode work. A function that's logically correct but lands at 40-80% fuzzy is a successful IMPLEMENTATION outcome. File what's left in `state/notes/<tu>.md`; INVESTIGATION ticks close it. The hard "no fake matching" rule still applies — no stack-padding tricks, no goto control flow.
 
-**How a tick ends** — campaign status drives everything; there is **no per-tick % floor**:
+**When a tick ends** — you do NOT decide. The agent process ends when context/session limits are hit; that's the only exit. There is **no per-tick % floor**, **no "natural checkpoint" off-ramp**, **no "fresh context for next tick" rationalization**. Those are loopholes; they're closed.
 
-- **TU functionally complete this tick** → mark `Status: functionally_complete` in `campaign_tu.md`. Next IMPL tick picks a *new* TU.
-- **TU not yet finished this tick** → keep working until a natural checkpoint, then journal + end. Leave `Status: in_progress`. Next IMPL tick continues the *same* TU.
-- **TU is blocked** (real cross-TU dependency you can't resolve here) → mark `Status: blocked` + reason. Next IMPL tick picks a *different* TU.
+What changes is the **campaign status** in `campaign_tu.md`, not the tick:
+
+- **TU functionally complete** → mark `Status: functionally_complete`. Next IMPL tick picks a *new* TU.
+- **TU blocked** (real cross-TU dependency you can't resolve here) → mark `Status: blocked` + reason. Next IMPL tick picks a *different* TU.
+- **Neither yet** → `Status: in_progress`. **Keep implementing.** If you've decoded the next function into notes, turn the notes into source *now*; don't journal "ready to implement next tick" and stop. That's the failure mode this rule exists to prevent. Next IMPL tick continues this same TU from where your session ended.
 
 "Functionally complete" means every function has correct logic. Byte-perfect codegen is NOT required — that's INVESTIGATION's job. A TU that builds, all functions present, all behavior correct, sits at 40-80% fuzzy → mark it done.
+
+Update journal/goals/notes/memory **incrementally after each commit**, not at end-of-tick — your session may end mid-work and you want progress captured.
 
 **Working on related/dependency TUs is allowed.** Edit base classes the campaign inherits from, fix sibling TUs the campaign calls into, add shared types/forward-decls to headers. Note them under `## Dependencies touched` in `campaign_tu.md`. What's NOT permitted: silently abandoning the campaign for an unrelated TU because the work got hard — mark `blocked` and exit cleanly instead.
 
